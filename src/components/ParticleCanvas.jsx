@@ -58,7 +58,7 @@ export default function ParticleCanvas() {
   return (
     <canvas
       ref={ref}
-      style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', opacity: 0.45 }}
+      style={{ position: 'fixed', inset: 0, zIndex: -1, pointerEvents: 'none', opacity: 0.45 }}
     />
   )
 }
