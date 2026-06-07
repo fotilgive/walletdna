@@ -57,7 +57,9 @@ export default function Login() {
         setUser(data.user);
         setPremium(data.user.isPremium);
         toast.success(data.isNew ? 'Account created!' : 'Welcome back!');
-        navigate(data.user.onboardingCompleted ? '/' : '/onboarding');
+        const redirect = sessionStorage.getItem('walletdna_redirect');
+        sessionStorage.removeItem('walletdna_redirect');
+        navigate(!data.user.onboardingCompleted ? '/onboarding' : (redirect || '/'));
       } else {
         toast.error(data.error || 'Google login failed');
       }
@@ -83,7 +85,9 @@ export default function Login() {
         setUser(data.user);
         setPremium(data.user.isPremium);
         toast.success('Welcome back!');
-        navigate(data.user.onboardingCompleted ? '/' : '/onboarding');
+        const redirect = sessionStorage.getItem('walletdna_redirect');
+        sessionStorage.removeItem('walletdna_redirect');
+        navigate(!data.user.onboardingCompleted ? '/onboarding' : (redirect || '/'));
       } else {
         toast.error(data.error || 'Login failed');
       }

@@ -154,9 +154,29 @@ export function setupAuthRoutes(app) {
     res.json({ success: true });
   });
 
-  // Get current user
+  // Get current user (full profile incl. name, avatar, license, created_at)
   app.get('/api/auth/me', requireAuth, (req, res) => {
-    res.json({ success: true, user: req.user });
+    try {
+      const full = getUserByEmail(req.user.email);
+      res.json({
+        success: true,
+        user: {
+          id: req.user.id,
+          email: req.user.email,
+          name: full?.name || null,
+          avatarUrl: full?.avatar_url || null,
+          isAdmin: req.user.isAdmin,
+          isPremium: req.user.isPremium,
+          gumroadLicense: req.user.gumroadLicense,
+          licenseActivatedAt: full?.license_activated_at || null,
+          createdAt: full?.created_at || null,
+          onboardingCompleted: req.user.onboardingCompleted,
+          authMethod: full?.google_id ? 'google' : 'password',
+        }
+      });
+    } catch (e) {
+      res.json({ success: true, user: req.user });
+    }
   });
 
   // Activate license

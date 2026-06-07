@@ -25,6 +25,7 @@ import Status from './pages/Status'
 import Onboarding from './pages/Onboarding'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import Account from './pages/Account'
 import useStore from './store/useStore'
 
 // Redirect to /login if not authenticated, /pricing if not premium.
@@ -32,18 +33,26 @@ import useStore from './store/useStore'
 // Render null during that window to avoid flash-redirect on premium users.
 function RequireAuth({ children }) {
   const { user, token, authLoading } = useStore()
+  const location = useLocation()
   if (authLoading) return null
-  if (!token) return <Navigate to="/landing" replace />
+  if (!token) {
+    if (location.pathname !== '/') sessionStorage.setItem('walletdna_redirect', location.pathname)
+    return <Navigate to="/login" replace />
+  }
   if (!user) return null
   return children
 }
 
 function RequirePremium({ children }) {
   const { user, token, isPremium, authLoading } = useStore()
+  const location = useLocation()
   if (authLoading) return null
-  if (!token) return <Navigate to="/login" replace />
+  if (!token) {
+    sessionStorage.setItem('walletdna_redirect', location.pathname)
+    return <Navigate to="/login" replace />
+  }
   if (!user) return null
-  if (!isPremium && !user?.isPremium) return <Navigate to="/landing" replace />
+  if (!isPremium && !user?.isPremium) return <Navigate to="/pricing" replace />
   return children
 }
 
@@ -116,6 +125,7 @@ export default function App() {
               <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
               <Route path="/profile/:address" element={<RequireAuth><Profile /></RequireAuth>} />
               <Route path="/alerts" element={<RequireAuth><Alerts /></RequireAuth>} />
+              <Route path="/account" element={<RequireAuth><Account /></RequireAuth>} />
               {/* Premium required */}
               <Route path="/clusters" element={<RequirePremium><Clusters /></RequirePremium>} />
               <Route path="/signal-history" element={<RequirePremium><SignalHistory /></RequirePremium>} />

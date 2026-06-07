@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { setUnauthorizedHandler } from '../utils/api'
 
 const useStore = create((set, get) => ({
   // ── User Authentication ───────────────────────
@@ -30,6 +31,14 @@ const useStore = create((set, get) => ({
   isPremium: false,
 
   initAuth: async () => {
+    // Register global 401 handler: server invalidated session → clear state + redirect
+    setUnauthorizedHandler(() => {
+      localStorage.removeItem('walletdna_token')
+      set({ user: null, token: null, isPremium: false, authLoading: false })
+      if (typeof window !== 'undefined' && !['/login','/register','/landing'].includes(window.location.pathname)) {
+        window.location.href = '/login'
+      }
+    })
     const token = localStorage.getItem('walletdna_token')
     if (!token) {
       set({ authLoading: false })
@@ -40,7 +49,7 @@ const useStore = create((set, get) => ({
         headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()
-      if (data.success && data.user) {
+      if (res.ok && data.success && data.user) {
         set({ user: data.user, token, isPremium: data.user.isPremium || false, authLoading: false })
       } else {
         localStorage.removeItem('walletdna_token')

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { fmtAddr } from '../utils/format'
 import useStore from '../store/useStore'
 import { useT } from '../utils/i18n'
+import AccountMenu from './AccountMenu'
 
 function FreshnessChip({ minsAgo }) {
   if (minsAgo === null || minsAgo === undefined) return null
@@ -164,6 +165,9 @@ export default function TopBar() {
             </button>
           ))}
         </div>
+
+        {/* Account */}
+        <AccountMenu />
       </div>
     </div>
   )
