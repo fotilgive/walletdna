@@ -728,11 +728,13 @@ app.get('/api/stats', async (req, res) => {
     } catch { return null; }
   })();
 
-  // Single source of truth for "verified smart money wallets" — approved Discovery candidates.
-  // This is the same number quoted on the landing page, the home page, and the sidebar.
-  const verifiedWallets = db.prepare(
-    `SELECT COUNT(*) as c FROM wallet_candidates WHERE status='approved'`
-  ).get().c;
+  // Verified smart money wallets: prefer approved Discovery candidates when available,
+  // fall back to wallet_metrics HIGH/MEDIUM quality (populated by seed on fresh Volume).
+  const verifiedWallets = (() => {
+    const candidates = db.prepare(`SELECT COUNT(*) as c FROM wallet_candidates WHERE status='approved'`).get().c;
+    if (candidates > 0) return candidates;
+    return db.prepare(`SELECT COUNT(*) as c FROM wallet_metrics WHERE data_quality IN ('HIGH','MEDIUM') AND alpha_score > 0`).get().c;
+  })();
 
   // Active clusters right now (≥2 quality wallets converging in last 48h, same filter as /api/clusters).
   const activeClusters = (() => {

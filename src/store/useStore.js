@@ -141,8 +141,11 @@ const useStore = create((set, get) => ({
   fetchAudit: async (address) => {
     if (get().audits[address]) return get().audits[address]
     set({ loadingAudit: true, auditError: null })
+    const token = get().token
     try {
-      const res = await fetch(`/api/audit?address=${address}`)
+      const res = await fetch(`/api/audit?address=${address}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
       const data = await res.json()
       if (!data.success) throw new Error(data.error)
       set(s => ({ audits: { ...s.audits, [address]: data }, loadingAudit: false }))
@@ -155,7 +158,7 @@ const useStore = create((set, get) => ({
 
   // ── Global Stats ─────────────────────────
   globalStats: {
-    walletsAnalyzed: parseInt(localStorage.getItem('walletsAnalyzed') || '1254'),
+    walletsAnalyzed: parseInt(localStorage.getItem('walletsAnalyzed') || '0'),
     signalsToday: 0,
     smartMoneyActive: 0,
     walletsTracked: 0,
@@ -203,36 +206,7 @@ const useStore = create((set, get) => ({
   },
 
   // ── Alerts & Subscriptions ───────────────────
-  alerts: [
-    {
-      id: 'alert_init_1',
-      type: 'WHALE_BUY',
-      emoji: '🐋',
-      token: 'BRETT',
-      wallet: 'DeFi Whale #1',
-      walletAddress: '0x4b9c25ca0224aef6a7522cabdbc3b2e125b7ca50',
-      amount: '$148,200',
-      timestamp: new Date(Date.now() - 4 * 60000).toISOString(),
-      minsAgo: 4,
-      significance: 88,
-      chain: 'Base',
-      hash: '0x4af095a89f21d3f9024f2b1841e4210a4fa588f0',
-    },
-    {
-      id: 'alert_init_2',
-      type: 'SMART_ENTRY',
-      emoji: '🎯',
-      token: 'DEGEN',
-      wallet: 'Alpha Hunter',
-      walletAddress: '0x8103683202aa8da10536036edef04cdd865c225e',
-      amount: '$45,000',
-      timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
-      minsAgo: 15,
-      significance: 92,
-      chain: 'Base',
-      hash: '0x532f27101965dd16442e59d40670faf5ebb142e4',
-    },
-  ],
+  alerts: [],
   alertSubscriptions: JSON.parse(localStorage.getItem('alertSubscriptions') || '[]'),
   
   addAlertSubscription: (address, label) => {
@@ -281,10 +255,7 @@ const useStore = create((set, get) => ({
       return { sniperConfig: updated }
     })
   },
-  sniperLogs: [
-    { id: 'log_1', time: new Date(Date.now() - 3 * 60000).toISOString(), type: 'INFO', msg: 'V2 Sniper Bot initialized on Base Mainnet Node.' },
-    { id: 'log_2', time: new Date(Date.now() - 2.5 * 60000).toISOString(), type: 'SUCCESS', msg: 'RPC handshake success. Latency: 12ms.' }
-  ],
+  sniperLogs: [],
   addSniperLog: (log) => {
     set(s => ({
       sniperLogs: [{ id: `log_${Date.now()}_${Math.random()}`, time: new Date().toISOString(), ...log }, ...s.sniperLogs].slice(0, 80)

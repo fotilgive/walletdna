@@ -302,7 +302,7 @@ export default function WalletDiscovery() {
     try {
       const [sRes, cRes] = await Promise.all([
         apiFetch('/api/discovery/stats').then(r => r.json()),
-        fetch(`/api/discovery/candidates?status=${activeTab}&limit=100`).then(r => r.json()),
+        apiFetch(`/api/discovery/candidates?status=${activeTab}&limit=100`).then(r => r.json()),
       ])
       if (sRes.success) setDiscoveryStats(sRes.stats)
       if (cRes.success) setDiscoveryCandidates(activeTab, cRes.candidates || [])

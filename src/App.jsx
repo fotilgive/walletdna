@@ -105,8 +105,8 @@ export default function App() {
           <main className="page-content">
             <ErrorBoundary>
             <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/leaderboard" element={<Leaderboard />} />
+              <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
+              <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
               <Route path="/pricing" element={<Pricing />} />
               <Route path="/proof" element={<Proof />} />
               <Route path="/status" element={<Status />} />
