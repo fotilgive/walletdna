@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomBytes } from 'crypto';
 import fetch from 'node-fetch';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -27,6 +28,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
+// Generates a readable but cryptographically unique password.
+// Format: Word + 4 random hex chars + Word + symbol
+// Example: "Alpha3f9cTrade#" — unique for every customer, always.
+function generatePassword() {
+  const words = ['Alpha','Whale','Token','Crypto','Base','Trade','Signal','Degen','Orbit','Nexus','Vault','Scout'];
+  const w1 = words[Math.floor(Math.random() * words.length)];
+  const w2 = words[Math.floor(Math.random() * words.length)];
+  const hex = randomBytes(3).toString('hex'); // 6 hex chars — 16^6 = 16M combinations
+  const symbols = ['!','@','#','$','%','&'];
+  const sym = symbols[Math.floor(Math.random() * symbols.length)];
+  return `${w1}${hex}${w2}${sym}`;
+}
 
 const restored = restoreTrackedUniverseFromSyncLog();
 if (restored.restored > 0) {
@@ -86,12 +100,7 @@ app.post('/api/webhooks/gumroad', async (req, res) => {
     let plainPassword = null;
 
     if (!user) {
-      // Generate readable password: 3 words style e.g. "Cyan7Rocket!"
-      const words = ['Alpha','Whale','Token','Smart','Crypto','Base','Trade','Wallet','Signal','Degen'];
-      const w1 = words[Math.floor(Math.random() * words.length)];
-      const w2 = words[Math.floor(Math.random() * words.length)];
-      const num = Math.floor(Math.random() * 90 + 10);
-      plainPassword = `${w1}${num}${w2}!`;
+      plainPassword = generatePassword();
 
       const { hashPassword } = await import('./auth.js');
       const passwordHash = await hashPassword(plainPassword);
@@ -163,11 +172,7 @@ app.post('/api/admin/generate-account', async (req, res) => {
   }
 
   try {
-    const words = ['Alpha','Whale','Token','Smart','Crypto','Base','Trade','Wallet','Signal','Degen'];
-    const w1 = words[Math.floor(Math.random() * words.length)];
-    const w2 = words[Math.floor(Math.random() * words.length)];
-    const num = Math.floor(Math.random() * 90 + 10);
-    const plainPassword = `${w1}${num}${w2}!`;
+    const plainPassword = generatePassword();
 
     const { hashPassword } = await import('./auth.js');
     const passwordHash = await hashPassword(plainPassword);
