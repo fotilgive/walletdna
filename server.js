@@ -3110,4 +3110,27 @@ if (existsSync(join(__dirname, 'dist', 'index.html'))) {
   });
 }
 
-app.listen(PORT, () => console.log(`🧬 WalletDNA API Server → ${BASE_URL}`));
+app.listen(PORT, () => {
+  console.log(`🧬 WalletDNA API Server → ${BASE_URL}`);
+
+  // Auto-run backtest on startup if table is empty or stale (>12h old)
+  setTimeout(async () => {
+    try {
+      const row = db.prepare(`SELECT COUNT(*) as c, MAX(computed_at) as latest FROM signal_backtest`).get();
+      const stale = !row.c || !row.latest || (Date.now() - row.latest) > 12 * 60 * 60 * 1000;
+      if (stale) {
+        console.log('[BACKTEST] Table empty or stale — starting backtest...');
+        const { spawn } = await import('child_process');
+        const child = spawn('node', ['scripts/backtest.js'], {
+          env: { ...process.env },
+          stdio: 'inherit',
+        });
+        child.on('exit', code => console.log(`[BACKTEST] Finished with code ${code}`));
+      } else {
+        console.log(`[BACKTEST] ${row.c} signals cached — skipping.`);
+      }
+    } catch (e) {
+      console.error('[BACKTEST] Auto-run failed:', e.message);
+    }
+  }, 90 * 1000); // 90s after start — give sync time to populate wallets first
+});

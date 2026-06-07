@@ -5,7 +5,7 @@
 
 import Database from 'better-sqlite3';
 
-const db = new Database('./alpha_engine.db');
+const db = new Database(process.env.DATABASE_PATH || './alpha_engine.db');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS signal_backtest (
