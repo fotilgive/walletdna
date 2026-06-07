@@ -533,6 +533,32 @@ export function activateLicense(userId, licenseKey) {
   stmt.run(licenseKey, Date.now(), userId);
 }
 
+// Revoke premium access (refunds, chargebacks, abuse).
+// Also kills all active sessions so user is logged out immediately.
+export function revokePremiumByEmail(email) {
+  const user = db.prepare(`SELECT id, email, is_premium FROM users WHERE email = ?`).get(email.toLowerCase());
+  if (!user) return { success: false, error: 'User not found' };
+  db.prepare(`UPDATE users SET is_premium = 0, gumroad_license = NULL, license_activated_at = NULL WHERE id = ?`).run(user.id);
+  const sess = db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(user.id);
+  return { success: true, email: user.email, wasPremium: user.is_premium === 1, sessionsKilled: sess.changes };
+}
+
+export function deleteUserByEmail(email) {
+  const user = db.prepare(`SELECT id, email FROM users WHERE email = ?`).get(email.toLowerCase());
+  if (!user) return { success: false, error: 'User not found' };
+  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(user.id);
+  db.prepare(`DELETE FROM users WHERE id = ?`).run(user.id);
+  return { success: true, email: user.email };
+}
+
+export function listUsers(limit = 100) {
+  return db.prepare(`
+    SELECT id, email, name, is_premium, is_admin, gumroad_license,
+           license_activated_at, created_at, onboarding_completed
+    FROM users ORDER BY created_at DESC LIMIT ?
+  `).all(limit);
+}
+
 export function completeOnboarding(userId) {
   db.prepare(`UPDATE users SET onboarding_completed = 1 WHERE id = ?`).run(userId);
 }

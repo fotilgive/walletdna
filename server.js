@@ -2060,12 +2060,14 @@ function buildBroadcastWhale(t) {
   ].join('\n');
 }
 
-async function sendTelegramMsg(chatId, text) {
+async function sendTelegramMsg(chatId, text, replyMarkup = null) {
   if (!BROADCAST_BOT) return false;
   try {
+    const body = { chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true };
+    if (replyMarkup) body.reply_markup = replyMarkup;
     const r = await fetch(`https://api.telegram.org/bot${BROADCAST_BOT}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true }),
+      body: JSON.stringify(body),
     }).then(r => r.json());
     if (!r.ok) {
       // Bot blocked by user or chat not found — deactivate subscriber
@@ -2170,15 +2172,272 @@ async function registerTelegramWebhook() {
 setTimeout(registerTelegramWebhook, 5000);
 
 // Telegram sends POST updates here
+// Admin Telegram chat ID — only this chat sees Admin menu / callbacks.
+const ADMIN_TG_CHAT = String(process.env.TELEGRAM_CHAT_ID || '').trim();
+
+// Edit existing message text + buttons (for callback flows).
+async function editTelegramMsg(chatId, messageId, text, replyMarkup = null) {
+  if (!BROADCAST_BOT) return false;
+  try {
+    const body = { chat_id: chatId, message_id: messageId, text, parse_mode: 'Markdown', disable_web_page_preview: true };
+    if (replyMarkup) body.reply_markup = replyMarkup;
+    await fetch(`https://api.telegram.org/bot${BROADCAST_BOT}/editMessageText`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return true;
+  } catch { return false; }
+}
+
+// Answer callback query (removes the loading spinner on Telegram's side).
+async function answerCallback(callbackQueryId, text = '', alert = false) {
+  if (!BROADCAST_BOT) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${BROADCAST_BOT}/answerCallbackQuery`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text, show_alert: alert }),
+    });
+  } catch {}
+}
+
+// Build main user menu keyboard (public).
+function mainMenuKeyboard(isAdmin) {
+  const rows = [
+    [{ text: '📊 Status', callback_data: 'menu:status' }, { text: '🔔 Subscribe', callback_data: 'menu:subscribe' }],
+    [{ text: '⏸ Unsubscribe', callback_data: 'menu:unsubscribe' }, { text: '❓ Help', callback_data: 'menu:help' }],
+  ];
+  if (isAdmin) rows.push([{ text: '👨‍💼 Admin Panel', callback_data: 'admin:home' }]);
+  return { inline_keyboard: rows };
+}
+
+function adminMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '👥 List Users', callback_data: 'admin:users:0' }, { text: '📡 Subscribers', callback_data: 'admin:subs' }],
+      [{ text: '📊 Bot Stats', callback_data: 'admin:stats' }],
+      [{ text: '← Back', callback_data: 'menu:home' }],
+    ],
+  };
+}
+
+// Per-user action menu (refund/grant/delete with confirmation).
+function userActionKeyboard(userId, isPremium) {
+  const rows = [];
+  if (isPremium) rows.push([{ text: '🚫 Revoke Premium (Refund)', callback_data: `confirm:refund:${userId}` }]);
+  else rows.push([{ text: '✅ Grant Premium', callback_data: `confirm:grant:${userId}` }]);
+  rows.push([{ text: '🗑 Delete Account', callback_data: `confirm:delete:${userId}` }]);
+  rows.push([{ text: '← Back to users', callback_data: 'admin:users:0' }]);
+  return { inline_keyboard: rows };
+}
+
+function confirmKeyboard(action, userId) {
+  return {
+    inline_keyboard: [
+      [{ text: '⚠️ Yes, confirm', callback_data: `do:${action}:${userId}` }],
+      [{ text: '← Cancel', callback_data: `admin:user:${userId}` }],
+    ],
+  };
+}
+
+// Format users list page (5 per page) with inline buttons.
+function formatUsersPage(offset = 0, perPage = 5) {
+  const total = db.prepare(`SELECT COUNT(*) as c FROM users`).get().c;
+  const rows = db.prepare(`
+    SELECT id, email, is_premium, is_admin, created_at
+    FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?
+  `).all(perPage, offset);
+
+  if (!rows.length) return { text: '_No users on this page._', keyboard: { inline_keyboard: [[{ text: '← Back', callback_data: 'admin:home' }]] } };
+
+  const lines = [`*Users ${offset + 1}–${offset + rows.length} of ${total}*`, ''];
+  const buttons = [];
+  for (const u of rows) {
+    const tag = u.is_admin ? '👑' : (u.is_premium ? '⭐' : '·');
+    const date = u.created_at ? new Date(u.created_at).toISOString().slice(0, 10) : '?';
+    lines.push(`${tag} \`${u.email}\` — ${date}`);
+    buttons.push([{ text: `${tag} ${u.email.slice(0, 30)}`, callback_data: `admin:user:${u.id}` }]);
+  }
+
+  const nav = [];
+  if (offset > 0) nav.push({ text: '← Prev', callback_data: `admin:users:${Math.max(0, offset - perPage)}` });
+  if (offset + perPage < total) nav.push({ text: 'Next →', callback_data: `admin:users:${offset + perPage}` });
+  if (nav.length) buttons.push(nav);
+  buttons.push([{ text: '← Admin menu', callback_data: 'admin:home' }]);
+
+  return { text: lines.join('\n'), keyboard: { inline_keyboard: buttons } };
+}
+
+function formatUserDetail(userId) {
+  const u = db.prepare(`SELECT * FROM users WHERE id = ?`).get(userId);
+  if (!u) return { text: '❌ User not found.', keyboard: { inline_keyboard: [[{ text: '← Back', callback_data: 'admin:users:0' }]] } };
+  const sess = db.prepare(`SELECT COUNT(*) as c FROM sessions WHERE user_id = ?`).get(u.id).c;
+  const created = u.created_at ? new Date(u.created_at).toISOString().slice(0, 16).replace('T', ' ') : '?';
+  const licDate = u.license_activated_at ? new Date(u.license_activated_at).toISOString().slice(0, 10) : '—';
+  const lic = u.gumroad_license ? `\`${String(u.gumroad_license).slice(0, 8)}…\`` : '—';
+  const text =
+    `*${u.email}*\n\n` +
+    `Name: ${u.name || '—'}\n` +
+    `Premium: ${u.is_premium ? '✅ Yes' : '❌ No'}${u.is_admin ? ' · 👑 admin' : ''}\n` +
+    `License: ${lic}\n` +
+    `Activated: ${licDate}\n` +
+    `Created: ${created}\n` +
+    `Active sessions: ${sess}`;
+  return { text, keyboard: userActionKeyboard(u.id, u.is_premium === 1) };
+}
+
 app.post('/api/telegram/webhook', express.json(), async (req, res) => {
   res.sendStatus(200); // always ack fast
+
+  // ── Callback queries (button clicks) ───────────────────────────────────────
+  const cb = req.body?.callback_query;
+  if (cb) {
+    const chatId = String(cb.message?.chat?.id);
+    const messageId = cb.message?.message_id;
+    const data = cb.data || '';
+    const isAdmin = ADMIN_TG_CHAT && chatId === ADMIN_TG_CHAT;
+
+    try {
+      // Public menu actions
+      if (data === 'menu:home') {
+        await answerCallback(cb.id);
+        return editTelegramMsg(chatId, messageId, '*WalletDNA Bot*\n\nChoose an action:', mainMenuKeyboard(isAdmin));
+      }
+      if (data === 'menu:status') {
+        const count = db.prepare('SELECT COUNT(*) as c FROM telegram_subscribers WHERE active = 1').get().c;
+        const clRes = await fetch(`${BASE_URL}/api/clusters`).then(r => r.json()).catch(() => ({}));
+        const clusters = clRes.clusters?.length || 0;
+        await answerCallback(cb.id);
+        return editTelegramMsg(chatId, messageId,
+          `📊 *WalletDNA Status*\n\n${clusters} active clusters\n${count} subscribers\n\nNext broadcast ≤10 min.`,
+          { inline_keyboard: [[{ text: '← Back', callback_data: 'menu:home' }]] });
+      }
+      if (data === 'menu:subscribe') {
+        const username = cb.from?.username || '';
+        const firstName = cb.from?.first_name || '';
+        db.prepare(`
+          INSERT INTO telegram_subscribers (chat_id, username, first_name, subscribed_at, active)
+          VALUES (?, ?, ?, ?, 1)
+          ON CONFLICT(chat_id) DO UPDATE SET active=1, username=excluded.username, first_name=excluded.first_name
+        `).run(chatId, username, firstName, Date.now());
+        await answerCallback(cb.id, '✅ Subscribed');
+        return editTelegramMsg(chatId, messageId, '✅ *Subscribed!*\n\nYou will receive smart money cluster alerts.',
+          { inline_keyboard: [[{ text: '← Back', callback_data: 'menu:home' }]] });
+      }
+      if (data === 'menu:unsubscribe') {
+        db.prepare('UPDATE telegram_subscribers SET active = 0 WHERE chat_id = ?').run(chatId);
+        await answerCallback(cb.id, '👋 Unsubscribed');
+        return editTelegramMsg(chatId, messageId, '👋 *Unsubscribed.*\n\nPress Subscribe anytime to re-enable.',
+          { inline_keyboard: [[{ text: '← Back', callback_data: 'menu:home' }]] });
+      }
+      if (data === 'menu:help') {
+        await answerCallback(cb.id);
+        return editTelegramMsg(chatId, messageId,
+          '*WalletDNA Bot*\n\nGet alerts when smart money wallets cluster-buy a token on Base.\n\nUse the buttons to subscribe, view status, or unsubscribe.',
+          { inline_keyboard: [[{ text: '← Back', callback_data: 'menu:home' }]] });
+      }
+
+      // Admin guard
+      if (!isAdmin) {
+        await answerCallback(cb.id, '⛔ Admin only', true);
+        return;
+      }
+
+      if (data === 'admin:home') {
+        await answerCallback(cb.id);
+        return editTelegramMsg(chatId, messageId, '*👨‍💼 Admin Panel*\n\nManage users and view system stats.', adminMenuKeyboard());
+      }
+      if (data.startsWith('admin:users:')) {
+        const off = parseInt(data.split(':')[2] || '0', 10);
+        const page = formatUsersPage(off);
+        await answerCallback(cb.id);
+        return editTelegramMsg(chatId, messageId, page.text, page.keyboard);
+      }
+      if (data.startsWith('admin:user:')) {
+        const uid = parseInt(data.split(':')[2], 10);
+        const detail = formatUserDetail(uid);
+        await answerCallback(cb.id);
+        return editTelegramMsg(chatId, messageId, detail.text, detail.keyboard);
+      }
+      if (data === 'admin:subs') {
+        const subs = db.prepare(`SELECT chat_id, username, first_name, active FROM telegram_subscribers ORDER BY subscribed_at DESC LIMIT 30`).all();
+        const active = subs.filter(s => s.active).length;
+        const lines = subs.slice(0, 30).map(s => `${s.active ? '🟢' : '⚪'} \`${s.chat_id}\` ${s.username ? '@' + s.username : (s.first_name || '')}`);
+        await answerCallback(cb.id);
+        return editTelegramMsg(chatId, messageId,
+          `*Telegram Subscribers*\n\n${active} active / ${subs.length} total\n\n${lines.join('\n') || '_none_'}`,
+          { inline_keyboard: [[{ text: '← Back', callback_data: 'admin:home' }]] });
+      }
+      if (data === 'admin:stats') {
+        const stats = await fetch(`${BASE_URL}/api/stats`).then(r => r.json()).catch(() => ({}));
+        const userCount = db.prepare(`SELECT COUNT(*) as c FROM users`).get().c;
+        const premiumCount = db.prepare(`SELECT COUNT(*) as c FROM users WHERE is_premium = 1`).get().c;
+        await answerCallback(cb.id);
+        return editTelegramMsg(chatId, messageId,
+          `*📊 Bot & DB Stats*\n\n` +
+          `Total users: ${userCount}\n` +
+          `Premium users: ${premiumCount}\n` +
+          `Active clusters: ${stats.activeClusters || 0}\n` +
+          `Wallets tracked: ${stats.walletsTracked || 0}\n` +
+          `Total trades: ${(stats.totalTrades || 0).toLocaleString()}\n` +
+          `Verified signals: ${stats.verifiedSignals || 0}`,
+          { inline_keyboard: [[{ text: '← Back', callback_data: 'admin:home' }]] });
+      }
+      // Confirm step
+      if (data.startsWith('confirm:')) {
+        const [, action, uidStr] = data.split(':');
+        const uid = parseInt(uidStr, 10);
+        const u = db.prepare(`SELECT email FROM users WHERE id = ?`).get(uid);
+        if (!u) { await answerCallback(cb.id, 'User not found', true); return; }
+        const labels = { refund: '🚫 Revoke Premium', grant: '✅ Grant Premium', delete: '🗑 Delete Account' };
+        await answerCallback(cb.id);
+        return editTelegramMsg(chatId, messageId,
+          `*Confirm: ${labels[action]}*\n\nUser: \`${u.email}\`\n\n` +
+          (action === 'delete' ? '⚠️ This permanently wipes the account.' : action === 'refund' ? 'Premium will be revoked. Sessions terminated.' : 'User will gain full premium access.'),
+          confirmKeyboard(action, uid));
+      }
+      // Execute step
+      if (data.startsWith('do:')) {
+        const [, action, uidStr] = data.split(':');
+        const uid = parseInt(uidStr, 10);
+        const u = db.prepare(`SELECT email FROM users WHERE id = ?`).get(uid);
+        if (!u) { await answerCallback(cb.id, 'User not found', true); return; }
+
+        if (action === 'refund') {
+          const { revokePremiumByEmail } = await import('./database.js');
+          const r = revokePremiumByEmail(u.email);
+          await answerCallback(cb.id, r.success ? `✅ Revoked for ${u.email}` : `❌ ${r.error}`);
+        } else if (action === 'grant') {
+          db.prepare(`UPDATE users SET is_premium = 1, license_activated_at = ? WHERE id = ?`).run(Date.now(), uid);
+          await answerCallback(cb.id, `✅ Premium granted to ${u.email}`);
+        } else if (action === 'delete') {
+          const { deleteUserByEmail } = await import('./database.js');
+          deleteUserByEmail(u.email);
+          await answerCallback(cb.id, `🗑 Deleted ${u.email}`);
+          const page = formatUsersPage(0);
+          return editTelegramMsg(chatId, messageId, page.text, page.keyboard);
+        }
+        const detail = formatUserDetail(uid);
+        return editTelegramMsg(chatId, messageId, detail.text, detail.keyboard);
+      }
+
+      await answerCallback(cb.id);
+    } catch (e) {
+      console.error('[BOT callback]', e);
+      await answerCallback(cb.id, '❌ Error', true);
+    }
+    return;
+  }
+
+  // ── Messages ───────────────────────────────────────────────────────────────
   const msg = req.body?.message || req.body?.channel_post;
   if (!msg?.text || !msg?.chat?.id) return;
 
   const chatId = String(msg.chat.id);
-  const text = msg.text.trim().toLowerCase();
+  const raw = msg.text.trim();
+  const text = raw.toLowerCase();
   const firstName = msg.from?.first_name || msg.chat?.first_name || '';
   const username = msg.from?.username || msg.chat?.username || '';
+  const isAdmin = ADMIN_TG_CHAT && chatId === ADMIN_TG_CHAT;
 
   if (text.startsWith('/start')) {
     db.prepare(`
@@ -2187,17 +2446,24 @@ app.post('/api/telegram/webhook', express.json(), async (req, res) => {
       ON CONFLICT(chat_id) DO UPDATE SET active=1, username=excluded.username, first_name=excluded.first_name
     `).run(chatId, username, firstName, Date.now());
     const count = db.prepare('SELECT COUNT(*) as c FROM telegram_subscribers WHERE active = 1').get().c;
-    await sendTelegramMsg(chatId, `✅ *Subscribed to WalletDNA Signals!*\n\nYou'll receive alerts when smart money clusters form on Base.\n\n_${count} subscribers total_\n\nSend /stop to unsubscribe.`);
-  } else if (text.startsWith('/stop') || text.startsWith('/unsubscribe')) {
+    await sendTelegramMsg(chatId,
+      `🧬 *Welcome to WalletDNA Bot!*\n\nYou are now subscribed to smart money cluster alerts on Base.\n\n_${count} subscribers · alerts every ≤10 min_`,
+      mainMenuKeyboard(isAdmin));
+  } else if (text.startsWith('/menu') || text.startsWith('/help')) {
+    await sendTelegramMsg(chatId, '*WalletDNA Bot*\n\nChoose an action:', mainMenuKeyboard(isAdmin));
+  } else if (text.startsWith('/admin') && isAdmin) {
+    await sendTelegramMsg(chatId, '*👨‍💼 Admin Panel*\n\nManage users and view system stats.', adminMenuKeyboard());
+  } else if (text.startsWith('/stop')) {
     db.prepare('UPDATE telegram_subscribers SET active = 0 WHERE chat_id = ?').run(chatId);
-    await sendTelegramMsg(chatId, '👋 Unsubscribed. Send /start anytime to re-subscribe.');
+    await sendTelegramMsg(chatId, '👋 Unsubscribed.', mainMenuKeyboard(isAdmin));
   } else if (text.startsWith('/status')) {
     const count = db.prepare('SELECT COUNT(*) as c FROM telegram_subscribers WHERE active = 1').get().c;
     const clRes = await fetch(`${BASE_URL}/api/clusters`).then(r => r.json()).catch(() => ({}));
     const clusters = clRes.clusters?.length || 0;
-    await sendTelegramMsg(chatId, `📊 *WalletDNA Status*\n\n${clusters} active clusters\n${count} subscribers\n\nNext broadcast in ≤10 min.`);
-  } else if (text.startsWith('/help')) {
-    await sendTelegramMsg(chatId, `*WalletDNA Bot Commands*\n\n/start — subscribe to signals\n/stop — unsubscribe\n/status — current cluster count\n/help — this message`);
+    await sendTelegramMsg(chatId, `📊 ${clusters} clusters · ${count} subscribers`, mainMenuKeyboard(isAdmin));
+  } else {
+    // any unknown text — show menu
+    await sendTelegramMsg(chatId, '*WalletDNA Bot*\n\nUse the buttons below:', mainMenuKeyboard(isAdmin));
   }
 });
 
