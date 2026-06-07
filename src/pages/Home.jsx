@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { fmtNum } from '../utils/format'
 import { useT, useFmt } from '../utils/i18n'
 import useStore from '../store/useStore'
+import { apiFetch } from '../utils/api'
 import FreshnessPulse from '../components/FreshnessPulse'
 import TodaysMoveCard from '../components/TodaysMoveCard'
 import RecentWins from '../components/RecentWins'
@@ -205,8 +206,8 @@ export default function Home() {
     const load = async () => {
       try {
         const [cRes, fRes, bRes] = await Promise.all([
-          fetch('/api/clusters').then(r => r.json()),
-          fetch('/api/alpha-feed').then(r => r.json()),
+          apiFetch('/api/clusters').then(r => r.json()),
+          apiFetch('/api/alpha-feed').then(r => r.json()),
           fetch('/api/backtest').then(r => r.json()),
         ])
         if (cRes.success) setClusters(cRes.clusters || [])

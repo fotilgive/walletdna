@@ -1874,6 +1874,13 @@ db.exec(`
     bot_token TEXT, chat_id TEXT, enabled INTEGER DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS sent_alerts (signal_id TEXT PRIMARY KEY, sent_at INTEGER);
+  CREATE TABLE IF NOT EXISTS telegram_subscribers (
+    chat_id TEXT PRIMARY KEY,
+    username TEXT,
+    first_name TEXT,
+    subscribed_at INTEGER,
+    active INTEGER DEFAULT 1
+  );
 `);
 
 app.get('/api/alerts/config', requireAuth, requirePremium, (req, res) => {
@@ -1935,18 +1942,19 @@ setInterval(runAutoAlerts, 5 * 60 * 1000);
 setTimeout(runAutoAlerts, 15000);
 
 // ──────────────────────────────────────────────
-// BROADCAST CHANNEL — one bot, one channel, every paid user gets the same feed.
-// No per-user bot setup. Configured via env:
-//   BROADCAST_BOT_TOKEN=123456:ABC...
-//   BROADCAST_CHANNEL_ID=@waldnaalpha     (or numeric -100xxxx)
-// Publishes:
-//   - Top 1 cluster per cycle (urgencyScore >= 60), once per signal_id ever
-//   - Any single tracked-quality BUY over $20k, once per tx_hash ever
+// TELEGRAM BOT — subscriber system + optional broadcast channel.
+// Env vars:
+//   TELEGRAM_BOT_TOKEN=...      (primary — powers subscriber bot)
+//   BROADCAST_BOT_TOKEN=...     (legacy fallback — single channel, optional)
+//   BROADCAST_CHANNEL_ID=...    (legacy fallback channel)
+//   PUBLIC_BACKEND_URL=https://walletdna-production.up.railway.app
+// Subscriber flow: user sends /start to bot → chat_id saved → gets all signals.
 // Cadence: 10 min.
 // ──────────────────────────────────────────────
 
-const BROADCAST_BOT = process.env.BROADCAST_BOT_TOKEN || '';
+const BROADCAST_BOT = process.env.TELEGRAM_BOT_TOKEN || process.env.BROADCAST_BOT_TOKEN || '';
 const BROADCAST_CH  = process.env.BROADCAST_CHANNEL_ID || '';
+const PUBLIC_BACKEND_URL = process.env.PUBLIC_BACKEND_URL || `http://localhost:${PORT}`;
 const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || 'http://localhost:5173';
 
 function buildBroadcastCluster(c) {
@@ -1980,22 +1988,44 @@ function buildBroadcastWhale(t) {
   ].join('\n');
 }
 
-async function sendBroadcast(text) {
-  if (!BROADCAST_BOT || !BROADCAST_CH) return false;
+async function sendTelegramMsg(chatId, text) {
+  if (!BROADCAST_BOT) return false;
   try {
     const r = await fetch(`https://api.telegram.org/bot${BROADCAST_BOT}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: BROADCAST_CH, text,
-        parse_mode: 'Markdown', disable_web_page_preview: true,
-      }),
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true }),
     }).then(r => r.json());
-    if (!r.ok) console.error('[BROADCAST] Telegram error:', r.description);
+    if (!r.ok) {
+      // Bot blocked by user or chat not found — deactivate subscriber
+      if (r.error_code === 403 || r.error_code === 400) {
+        db.prepare('UPDATE telegram_subscribers SET active = 0 WHERE chat_id = ?').run(String(chatId));
+        console.log(`[BOT] Deactivated subscriber ${chatId}: ${r.description}`);
+      } else {
+        console.error('[BOT] Telegram error for', chatId, ':', r.description);
+      }
+    }
     return !!r.ok;
   } catch (e) {
-    console.error('[BROADCAST] send failed:', e.message);
+    console.error('[BOT] send failed:', e.message);
     return false;
   }
+}
+
+async function sendBroadcast(text) {
+  if (!BROADCAST_BOT) return false;
+  // Send to all active subscribers
+  const subs = db.prepare('SELECT chat_id FROM telegram_subscribers WHERE active = 1').all();
+  let sent = 0;
+  for (const sub of subs) {
+    const ok = await sendTelegramMsg(sub.chat_id, text);
+    if (ok) sent++;
+    if (subs.length > 1) await new Promise(r => setTimeout(r, 50)); // stay under Telegram rate limit
+  }
+  // Legacy: also send to hardcoded broadcast channel if configured
+  if (BROADCAST_CH && BROADCAST_CH !== String(subs[0]?.chat_id)) {
+    await sendTelegramMsg(BROADCAST_CH, text);
+  }
+  return sent > 0;
 }
 
 async function runBroadcastChannel() {
@@ -2039,13 +2069,71 @@ async function runBroadcastChannel() {
   }
 }
 
-if (BROADCAST_BOT && BROADCAST_CH) {
-  console.log('[BROADCAST] Enabled — publishing to', BROADCAST_CH);
+if (BROADCAST_BOT) {
+  const subCount = db.prepare('SELECT COUNT(*) as c FROM telegram_subscribers WHERE active = 1').get().c;
+  console.log(`[BOT] Enabled — ${subCount} active subscribers${BROADCAST_CH ? ` + channel ${BROADCAST_CH}` : ''}`);
   setTimeout(runBroadcastChannel, 20000);
   setInterval(runBroadcastChannel, 10 * 60 * 1000);
 } else {
-  console.log('[BROADCAST] Disabled (set BROADCAST_BOT_TOKEN + BROADCAST_CHANNEL_ID to enable).');
+  console.log('[BOT] Disabled (set TELEGRAM_BOT_TOKEN to enable).');
 }
+
+// ── TELEGRAM BOT WEBHOOK ──────────────────────────────────────────────────────
+
+// Register webhook on Railway startup
+async function registerTelegramWebhook() {
+  if (!BROADCAST_BOT || !PUBLIC_BACKEND_URL || PUBLIC_BACKEND_URL.includes('localhost')) return;
+  const webhookUrl = `${PUBLIC_BACKEND_URL}/api/telegram/webhook`;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${BROADCAST_BOT}/setWebhook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: webhookUrl, drop_pending_updates: true }),
+    }).then(r => r.json());
+    if (r.ok) console.log('[BOT] Webhook registered:', webhookUrl);
+    else console.error('[BOT] Webhook registration failed:', r.description);
+  } catch (e) {
+    console.error('[BOT] Webhook register error:', e.message);
+  }
+}
+setTimeout(registerTelegramWebhook, 5000);
+
+// Telegram sends POST updates here
+app.post('/api/telegram/webhook', express.json(), async (req, res) => {
+  res.sendStatus(200); // always ack fast
+  const msg = req.body?.message || req.body?.channel_post;
+  if (!msg?.text || !msg?.chat?.id) return;
+
+  const chatId = String(msg.chat.id);
+  const text = msg.text.trim().toLowerCase();
+  const firstName = msg.from?.first_name || msg.chat?.first_name || '';
+  const username = msg.from?.username || msg.chat?.username || '';
+
+  if (text.startsWith('/start')) {
+    db.prepare(`
+      INSERT INTO telegram_subscribers (chat_id, username, first_name, subscribed_at, active)
+      VALUES (?, ?, ?, ?, 1)
+      ON CONFLICT(chat_id) DO UPDATE SET active=1, username=excluded.username, first_name=excluded.first_name
+    `).run(chatId, username, firstName, Date.now());
+    const count = db.prepare('SELECT COUNT(*) as c FROM telegram_subscribers WHERE active = 1').get().c;
+    await sendTelegramMsg(chatId, `✅ *Subscribed to WalletDNA Signals!*\n\nYou'll receive alerts when smart money clusters form on Base.\n\n_${count} subscribers total_\n\nSend /stop to unsubscribe.`);
+  } else if (text.startsWith('/stop') || text.startsWith('/unsubscribe')) {
+    db.prepare('UPDATE telegram_subscribers SET active = 0 WHERE chat_id = ?').run(chatId);
+    await sendTelegramMsg(chatId, '👋 Unsubscribed. Send /start anytime to re-subscribe.');
+  } else if (text.startsWith('/status')) {
+    const count = db.prepare('SELECT COUNT(*) as c FROM telegram_subscribers WHERE active = 1').get().c;
+    const clRes = await fetch(`${BASE_URL}/api/clusters`).then(r => r.json()).catch(() => ({}));
+    const clusters = clRes.clusters?.length || 0;
+    await sendTelegramMsg(chatId, `📊 *WalletDNA Status*\n\n${clusters} active clusters\n${count} subscribers\n\nNext broadcast in ≤10 min.`);
+  } else if (text.startsWith('/help')) {
+    await sendTelegramMsg(chatId, `*WalletDNA Bot Commands*\n\n/start — subscribe to signals\n/stop — unsubscribe\n/status — current cluster count\n/help — this message`);
+  }
+});
+
+// Admin endpoint: list subscribers
+app.get('/api/telegram/subscribers', requireAdmin, (req, res) => {
+  const subs = db.prepare('SELECT chat_id, username, first_name, subscribed_at, active FROM telegram_subscribers ORDER BY subscribed_at DESC').all();
+  res.json({ success: true, count: subs.filter(s => s.active).length, subscribers: subs });
+});
 
 // Send real Telegram message via user's bot token + chat id
 app.post('/api/alerts/send', requireAdmin, async (req, res) => {

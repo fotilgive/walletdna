@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useT, useFmt } from '../utils/i18n'
 import useStore from '../store/useStore'
 import FreshnessPulse from '../components/FreshnessPulse'
+import { apiFetch } from '../utils/api'
 
 const STATUS_COLORS = {
   pending:  { color: 'var(--amber)', bg: 'rgba(255,184,0,0.1)',   icon: '⏳' },
@@ -300,7 +301,7 @@ export default function WalletDiscovery() {
     if (!hasCached) setLoading(true)
     try {
       const [sRes, cRes] = await Promise.all([
-        fetch('/api/discovery/stats').then(r => r.json()),
+        apiFetch('/api/discovery/stats').then(r => r.json()),
         fetch(`/api/discovery/candidates?status=${activeTab}&limit=100`).then(r => r.json()),
       ])
       if (sRes.success) setDiscoveryStats(sRes.stats)
@@ -317,7 +318,7 @@ export default function WalletDiscovery() {
     // Always pre-load approved candidates so the value stats render even
     // when the user is on a different tab.
     if (!discoveryCandidatesCache.approved) {
-      fetch('/api/discovery/candidates?status=approved&limit=100')
+      apiFetch('/api/discovery/candidates?status=approved&limit=100')
         .then(r => r.json())
         .then(d => { if (d.success) setDiscoveryCandidates('approved', d.candidates || []) })
         .catch(() => {})
@@ -354,7 +355,7 @@ export default function WalletDiscovery() {
     }, 500)
 
     try {
-      await fetch('/api/discovery/run', { method: 'POST' }).then(r => r.json())
+      await apiFetch('/api/discovery/run', { method: 'POST' }).then(r => r.json())
       const now = new Date().toLocaleTimeString()
       setDiscoveryLastRun(now)
       clearInterval(progressInterval)

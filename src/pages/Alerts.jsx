@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { apiFetch } from '../utils/api'
 
 /**
  * Alerts page — zero-friction. No bot token. No chat_id. No BotFather.
@@ -20,8 +21,8 @@ export default function Alerts() {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/alerts/preview?type=cluster').then(r => r.json()).catch(() => ({ text: '' })),
-      fetch('/api/alerts/preview?type=exit').then(r => r.json()).catch(() => ({ text: '' })),
+      apiFetch('/api/alerts/preview?type=cluster').then(r => r.json()).catch(() => ({ text: '' })),
+      apiFetch('/api/alerts/preview?type=exit').then(r => r.json()).catch(() => ({ text: '' })),
     ]).then(([c, e]) => setPreview({ cluster: c.text || '', exit: e.text || '' }))
   }, [])
 

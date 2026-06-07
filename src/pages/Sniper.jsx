@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { fmtAddr, fmtNum } from '../utils/format'
 import { useT } from '../utils/i18n'
+import { apiFetch } from '../utils/api'
 
 export default function Sniper() {
   const navigate = useNavigate()
@@ -13,7 +14,7 @@ export default function Sniper() {
   useEffect(() => {
     const fetchClusters = async () => {
       try {
-        const res = await fetch('/api/clusters')
+        const res = await apiFetch('/api/clusters')
         const data = await res.json()
         if (data.success) {
           setClusters(data.clusters)
