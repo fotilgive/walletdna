@@ -56,7 +56,9 @@ function RequireAuth({ children }) {
   const location = useLocation()
   if (authLoading) return <AuthSpinner />
   if (!token || !user) {
-    if (location.pathname !== '/') sessionStorage.setItem('walletdna_redirect', location.pathname)
+    // Root path → landing (sales page). Other auth-only paths → login.
+    if (location.pathname === '/') return <Navigate to="/landing" replace />
+    sessionStorage.setItem('walletdna_redirect', location.pathname)
     return <Navigate to="/login" replace />
   }
   return children
