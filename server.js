@@ -21,6 +21,7 @@ import {
 } from './database.js';
 import { syncWallet, recalculateMetrics, assessWalletTradeSignals, deriveDnaScores } from './indexer.js';
 import { setupAuthRoutes, requireAuth, requirePremium, requireAdmin } from './auth.js';
+import { sendWelcomeEmail } from './mailer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -82,10 +83,18 @@ app.post('/api/webhooks/gumroad', async (req, res) => {
 
     // Find or create user by email
     let user = getUserByEmail(purchaser_email);
+    let plainPassword = null;
+
     if (!user) {
-      const tempPassword = Math.random().toString(36).slice(-12) + Math.random().toString(36).slice(-12);
+      // Generate readable password: 3 words style e.g. "Cyan7Rocket!"
+      const words = ['Alpha','Whale','Token','Smart','Crypto','Base','Trade','Wallet','Signal','Degen'];
+      const w1 = words[Math.floor(Math.random() * words.length)];
+      const w2 = words[Math.floor(Math.random() * words.length)];
+      const num = Math.floor(Math.random() * 90 + 10);
+      plainPassword = `${w1}${num}${w2}!`;
+
       const { hashPassword } = await import('./auth.js');
-      const passwordHash = await hashPassword(tempPassword);
+      const passwordHash = await hashPassword(plainPassword);
       const result = createUser(purchaser_email, passwordHash);
       if (result.success) {
         user = getUserByEmail(purchaser_email);
@@ -96,6 +105,16 @@ app.post('/api/webhooks/gumroad', async (req, res) => {
     if (user) {
       activateLicense(user.id, license_key);
       console.log(`[GUMROAD] License activated for ${purchaser_email}: ${license_key}`);
+
+      // Send welcome email with credentials only for new users
+      if (plainPassword) {
+        try {
+          await sendWelcomeEmail({ to: purchaser_email, password: plainPassword });
+        } catch (mailErr) {
+          console.error('[GUMROAD] Failed to send welcome email:', mailErr.message);
+          // Don't fail the webhook — user is already created and activated
+        }
+      }
     }
 
     res.json({ success: true });
@@ -125,6 +144,70 @@ app.post('/api/admin/create-admin', async (req, res) => {
     res.json({ success: true, message: 'Admin user created' });
   } else {
     res.status(400).json({ success: false, error: result.error });
+  }
+});
+
+// Admin: Generate premium account for any email + send welcome email
+// Use this to manually onboard buyers who contact you directly.
+// curl -X POST https://your-domain/api/admin/generate-account \
+//   -H "Content-Type: application/json" \
+//   -d '{"email":"buyer@example.com","adminToken":"YOUR_ADMIN_TOKEN"}'
+app.post('/api/admin/generate-account', async (req, res) => {
+  const { email, adminToken } = req.body;
+
+  if (adminToken !== process.env.ADMIN_TOKEN) {
+    return res.status(403).json({ success: false, error: 'Invalid admin token' });
+  }
+  if (!email) {
+    return res.status(400).json({ success: false, error: 'Email required' });
+  }
+
+  try {
+    const words = ['Alpha','Whale','Token','Smart','Crypto','Base','Trade','Wallet','Signal','Degen'];
+    const w1 = words[Math.floor(Math.random() * words.length)];
+    const w2 = words[Math.floor(Math.random() * words.length)];
+    const num = Math.floor(Math.random() * 90 + 10);
+    const plainPassword = `${w1}${num}${w2}!`;
+
+    const { hashPassword } = await import('./auth.js');
+    const passwordHash = await hashPassword(plainPassword);
+
+    let user = getUserByEmail(email);
+    if (!user) {
+      const result = createUser(email, passwordHash);
+      if (!result.success) return res.status(400).json({ success: false, error: result.error });
+      user = getUserByEmail(email);
+    }
+
+    // Activate premium
+    activateLicense(user.id, `MANUAL-${Date.now()}`);
+
+    // Send welcome email
+    await sendWelcomeEmail({ to: email, password: plainPassword });
+
+    res.json({
+      success: true,
+      email,
+      password: plainPassword,
+      message: `Account created and welcome email sent to ${email}`,
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Admin: Email test
+app.post('/api/admin/test-email', async (req, res) => {
+  const { email, adminToken } = req.body;
+  if (adminToken !== process.env.ADMIN_TOKEN) {
+    return res.status(403).json({ success: false, error: 'Invalid admin token' });
+  }
+  try {
+    const { sendTestEmail } = await import('./mailer.js');
+    await sendTestEmail(email || process.env.SUPPORT_EMAIL);
+    res.json({ success: true, message: 'Test email sent' });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
