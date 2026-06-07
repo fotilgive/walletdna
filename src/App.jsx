@@ -33,7 +33,7 @@ import useStore from './store/useStore'
 function RequireAuth({ children }) {
   const { user, token, authLoading } = useStore()
   if (authLoading) return null
-  if (!token) return <Navigate to="/login" replace />
+  if (!token) return <Navigate to="/landing" replace />
   if (!user) return null
   return children
 }
@@ -43,7 +43,7 @@ function RequirePremium({ children }) {
   if (authLoading) return null
   if (!token) return <Navigate to="/login" replace />
   if (!user) return null
-  if (!isPremium && !user?.isPremium) return <Navigate to="/pricing" replace />
+  if (!isPremium && !user?.isPremium) return <Navigate to="/landing" replace />
   return children
 }
 
