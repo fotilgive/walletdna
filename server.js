@@ -141,6 +141,17 @@ app.use('/api/search', heavyLimiter);
 app.use('/api/discovery/run', heavyLimiter);
 app.use('/api/audit', heavyLimiter);
 
+// Anti-abuse: max 3 email registrations per IP per hour
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many accounts created from this IP. Try again later or use Google login.' },
+  skip: (req) => req.path !== '/api/auth/register',
+});
+app.use('/api/auth/register', registerLimiter);
+
 // ──────────────────────────────────────────────
 // HELPERS
 // ──────────────────────────────────────────────

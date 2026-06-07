@@ -222,6 +222,13 @@ function runMigrations() {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)`,
     `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+    // Google OAuth
+    `ALTER TABLE users ADD COLUMN google_id TEXT`,
+    `ALTER TABLE users ADD COLUMN avatar_url TEXT`,
+    `ALTER TABLE users ADD COLUMN name TEXT`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)`,
+    // Allow null password_hash for Google-only accounts
+    `CREATE TABLE IF NOT EXISTS users_v2_done (id INTEGER PRIMARY KEY)`,
   ];
   for (const cmd of migrations) {
     try { db.exec(cmd); } catch (_) {}
@@ -528,6 +535,24 @@ export function activateLicense(userId, licenseKey) {
 
 export function completeOnboarding(userId) {
   db.prepare(`UPDATE users SET onboarding_completed = 1 WHERE id = ?`).run(userId);
+}
+
+export function upsertGoogleUser({ googleId, email, name, avatarUrl }) {
+  const existing = db.prepare(`SELECT * FROM users WHERE google_id = ? OR email = ?`).get(googleId, email.toLowerCase());
+  if (existing) {
+    db.prepare(`UPDATE users SET google_id = ?, avatar_url = ?, name = ? WHERE id = ?`)
+      .run(googleId, avatarUrl, name, existing.id);
+    return { userId: existing.id, isNew: false };
+  }
+  const result = db.prepare(`
+    INSERT INTO users (email, password_hash, created_at, google_id, avatar_url, name)
+    VALUES (?, '', ?, ?, ?, ?)
+  `).run(email.toLowerCase(), Date.now(), googleId, avatarUrl, name);
+  return { userId: result.lastInsertRowid, isNew: true };
+}
+
+export function getUserByGoogleId(googleId) {
+  return db.prepare(`SELECT * FROM users WHERE google_id = ?`).get(googleId);
 }
 
 export { db };

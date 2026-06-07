@@ -1,15 +1,19 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import { 
-  createUser, 
-  getUserByEmail, 
-  createSession, 
-  getSessionByToken, 
+import { OAuth2Client } from 'google-auth-library';
+import {
+  createUser,
+  getUserByEmail,
+  createSession,
+  getSessionByToken,
   deleteSession,
   deleteExpiredSessions,
   activateLicense,
-  completeOnboarding
+  completeOnboarding,
+  upsertGoogleUser,
 } from './database.js';
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'walletdna-secret-key-change-in-production';
 const JWT_EXPIRY = '7d';
@@ -169,6 +173,57 @@ export function setupAuthRoutes(app) {
   app.post('/api/auth/complete-onboarding', requireAuth, (req, res) => {
     completeOnboarding(req.user.id);
     res.json({ success: true });
+  });
+
+  // Google OAuth — verify credential from Google Identity Services
+  app.post('/api/auth/google', async (req, res) => {
+    try {
+      const { credential } = req.body;
+      if (!credential) return res.status(400).json({ success: false, error: 'Missing credential' });
+
+      if (!process.env.GOOGLE_CLIENT_ID) {
+        return res.status(503).json({ success: false, error: 'Google login not configured' });
+      }
+
+      const ticket = await googleClient.verifyIdToken({
+        idToken: credential,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      const payload = ticket.getPayload();
+      const { sub: googleId, email, name, picture } = payload;
+
+      if (!email) return res.status(400).json({ success: false, error: 'No email from Google' });
+
+      const { userId, isNew } = upsertGoogleUser({
+        googleId,
+        email,
+        name: name || email.split('@')[0],
+        avatarUrl: picture || null,
+      });
+
+      const token = generateToken({ userId });
+      const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      createSession(userId, token, expiresAt);
+
+      const user = getUserByEmail(email);
+      res.json({
+        success: true,
+        token,
+        isNew,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          avatarUrl: user.avatar_url,
+          isAdmin: user.is_admin === 1,
+          isPremium: user.is_premium === 1,
+          onboardingCompleted: user.onboarding_completed === 1,
+        },
+      });
+    } catch (e) {
+      console.error('[GOOGLE AUTH]', e.message);
+      res.status(401).json({ success: false, error: 'Google authentication failed' });
+    }
   });
 
   // Clean up expired sessions (run daily)
