@@ -37,8 +37,10 @@ export default function LiveTicker() {
         if (alive && d.success) setItems(d.ticker || [])
       } catch {}
     }
+    // Load immediately on mount
     load()
-    const id = setInterval(load, 60_000)
+    // Then poll every 15s for fresh trades
+    const id = setInterval(load, 15_000)
     return () => { alive = false; clearInterval(id) }
   }, [])
 
@@ -59,9 +61,31 @@ export default function LiveTicker() {
           0%   { transform: translateX(0); }
           100% { transform: translateX(-50%); }
         }
+        @keyframes wd-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
+        }
         .wd-ticker-rail { display: inline-flex; gap: 18px; padding: 8px 0; animation: wd-ticker 90s linear infinite; }
         .wd-ticker-rail:hover { animation-play-state: paused; }
+        .wd-live-badge { 
+          display: inline-flex; align-items: center; gap: 4px;
+          padding: 3px 8px; background: rgba(0,229,148,0.15); 
+          border-radius: 999px; font-size: 0.65rem; font-weight: 700;
+          color: var(--green, #00E594);
+        }
+        .wd-live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green, #00E594); animation: wd-pulse 2s ease-in-out infinite; }
       `}</style>
+      <div style={{
+        padding: '6px 16px', fontSize: '0.7rem', color: 'var(--text-3)',
+        display: 'flex', alignItems: 'center', gap: 12,
+        background: 'rgba(0,0,0,0.3)',
+      }}>
+        <div className="wd-live-badge">
+          <div className="wd-live-dot" />
+          LIVE
+        </div>
+        <span>Smart money trades from top alpha wallets</span>
+      </div>
       <div style={{
         position: 'absolute', top: 0, bottom: 0, left: 0, width: 80,
         background: 'linear-gradient(90deg, var(--bg-0), transparent)',
