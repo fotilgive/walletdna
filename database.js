@@ -229,6 +229,11 @@ function runMigrations() {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)`,
     // Allow null password_hash for Google-only accounts
     `CREATE TABLE IF NOT EXISTS users_v2_done (id INTEGER PRIMARY KEY)`,
+    // Backtest run tracking — persists last_run_timestamp across container restarts
+    `CREATE TABLE IF NOT EXISTS backtest_metadata (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`,
   ];
   for (const cmd of migrations) {
     try { db.exec(cmd); } catch (_) {}
