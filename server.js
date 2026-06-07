@@ -47,6 +47,76 @@ if (restored.restored > 0) {
   console.log(`[PIPELINE] Restored ${restored.restored} wallets from the historical sync log.`);
 }
 
+// Bootstrap: if tracked_wallets is empty (fresh Railway Volume), seed from bundled snapshots.
+// Provides immediate data for Signal History, Proof, Landing stats.
+// wallet_trades syncs in background (~30 min) — Clusters appear after that.
+{
+  const walletCount = db.prepare('SELECT COUNT(*) as c FROM tracked_wallets').get().c;
+  if (walletCount === 0) {
+    try {
+      const { readFileSync } = await import('fs');
+      const { join: pathJoin, dirname: pathDirname } = await import('path');
+      const { fileURLToPath: pathFileURLToPath } = await import('url');
+      const __dir = pathDirname(pathFileURLToPath(import.meta.url));
+
+      // 1. Seed tracked wallets
+      const walletSeeds = JSON.parse(readFileSync(pathJoin(__dir, 'scripts', 'wallets_seed.json'), 'utf8'));
+      const now = Date.now();
+      const insertWallet = db.prepare(`INSERT OR IGNORE INTO tracked_wallets (address, label, first_seen, last_updated) VALUES (?, ?, ?, ?)`);
+      const insertMetrics = db.prepare(`INSERT OR IGNORE INTO wallet_metrics (address) VALUES (?)`);
+      db.transaction(() => {
+        for (const s of walletSeeds) { insertWallet.run(s.address, s.label, now, now); insertMetrics.run(s.address); }
+      })();
+      console.log(`[BOOTSTRAP] Seeded ${walletSeeds.length} wallets.`);
+
+      // 2. Seed wallet metrics (alpha scores, win rates)
+      try {
+        const metrics = JSON.parse(readFileSync(pathJoin(__dir, 'scripts', 'wallet_metrics_seed.json'), 'utf8'));
+        const upsertM = db.prepare(`
+          INSERT OR REPLACE INTO wallet_metrics
+            (address, alpha_score, win_rate, roi_30d, total_pnl, total_capital,
+             closed_positions, profitable_positions, consistency_score,
+             data_quality, archetype, days_active, last_calc_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `);
+        db.transaction(() => {
+          for (const m of metrics) {
+            upsertM.run(m.address, m.alpha_score, m.win_rate, m.roi_30d, m.total_pnl,
+              m.total_capital, m.closed_positions, m.profitable_positions,
+              m.consistency_score, m.data_quality, m.archetype, m.days_active, m.last_calc_at);
+          }
+        })();
+        console.log(`[BOOTSTRAP] Seeded ${metrics.length} wallet metrics.`);
+      } catch (e) { console.error('[BOOTSTRAP] Metrics seed failed:', e.message); }
+
+      // 3. Seed signal_backtest (Signal History + Proof page work immediately)
+      const backtestCount = db.prepare('SELECT COUNT(*) as c FROM signal_backtest').get().c;
+      if (backtestCount === 0) {
+        try {
+          const signals = JSON.parse(readFileSync(pathJoin(__dir, 'scripts', 'signal_backtest_seed.json'), 'utf8'));
+          const upsertS = db.prepare(`
+            INSERT OR REPLACE INTO signal_backtest
+              (token_address, token_symbol, token_name, wallet_count, total_inflow,
+               signal_ts, entry_price, peak_price_30d, peak_gain_pct,
+               current_price, current_pct, candle_days, computed_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+          `);
+          db.transaction(() => {
+            for (const s of signals) {
+              upsertS.run(s.token_address, s.token_symbol, s.token_name, s.wallet_count,
+                s.total_inflow, s.signal_ts, s.entry_price, s.peak_price_30d,
+                s.peak_gain_pct, s.current_price, s.current_pct, s.candle_days, s.computed_at);
+            }
+          })();
+          console.log(`[BOOTSTRAP] Seeded ${signals.length} backtest signals — Signal History ready.`);
+        } catch (e) { console.error('[BOOTSTRAP] Signal seed failed:', e.message); }
+      }
+    } catch (e) {
+      console.error('[BOOTSTRAP] Seed failed:', e.message);
+    }
+  }
+}
+
 app.use(cors());
 app.use(express.json());
 
