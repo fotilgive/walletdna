@@ -7,7 +7,9 @@ let onUnauthorized = null;
 export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 
 export async function apiFetch(url, opts = {}) {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('walletdna_token') : null;
+  const token = typeof window !== 'undefined'
+    ? (localStorage.getItem('walletdna_token') || sessionStorage.getItem('walletdna_token'))
+    : null;
   const headers = {
     ...(opts.headers || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -16,6 +18,7 @@ export async function apiFetch(url, opts = {}) {
 
   if (res.status === 401 && token) {
     localStorage.removeItem('walletdna_token');
+    sessionStorage.removeItem('walletdna_token');
     if (onUnauthorized) onUnauthorized();
     else if (typeof window !== 'undefined') window.location.href = '/login';
   }

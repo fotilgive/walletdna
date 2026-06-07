@@ -3,16 +3,27 @@ import { setUnauthorizedHandler } from '../utils/api'
 
 const useStore = create((set, get) => ({
   // ── User Authentication ───────────────────────
+  // Token storage:
+  //   remember=true  → localStorage (persists across browser closes)
+  //   remember=false → sessionStorage (cleared when tab closes)
+  // initAuth checks both.
   user: null,
-  token: localStorage.getItem('walletdna_token') || null,
-  authLoading: !!localStorage.getItem('walletdna_token'), // true if token exists — waiting for /me
+  token: localStorage.getItem('walletdna_token') || sessionStorage.getItem('walletdna_token') || null,
+  authLoading: !!(localStorage.getItem('walletdna_token') || sessionStorage.getItem('walletdna_token')),
   supportEmail: import.meta.env.VITE_SUPPORT_EMAIL || 'support@walletdna.com',
   setUser: (user) => set({ user }),
-  setToken: (token) => {
+  setToken: (token, remember = true) => {
     if (token) {
-      localStorage.setItem('walletdna_token', token);
+      if (remember) {
+        localStorage.setItem('walletdna_token', token);
+        sessionStorage.removeItem('walletdna_token');
+      } else {
+        sessionStorage.setItem('walletdna_token', token);
+        localStorage.removeItem('walletdna_token');
+      }
     } else {
       localStorage.removeItem('walletdna_token');
+      sessionStorage.removeItem('walletdna_token');
     }
     set({ token });
   },
@@ -25,6 +36,7 @@ const useStore = create((set, get) => ({
       }).catch(() => {})
     }
     localStorage.removeItem('walletdna_token')
+    sessionStorage.removeItem('walletdna_token')
     set({ user: null, token: null, isPremium: false })
   },
 
@@ -34,30 +46,38 @@ const useStore = create((set, get) => ({
     // Register global 401 handler: server invalidated session → clear state + redirect
     setUnauthorizedHandler(() => {
       localStorage.removeItem('walletdna_token')
+      sessionStorage.removeItem('walletdna_token')
       set({ user: null, token: null, isPremium: false, authLoading: false })
       if (typeof window !== 'undefined' && !['/login','/register','/landing'].includes(window.location.pathname)) {
         window.location.href = '/login'
       }
     })
-    const token = localStorage.getItem('walletdna_token')
+    const token = localStorage.getItem('walletdna_token') || sessionStorage.getItem('walletdna_token')
     if (!token) {
       set({ authLoading: false })
       return
     }
-    try {
-      const res = await fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+    // Retry once on network error so transient blips don't kick the user out.
+    const tryFetch = async () => {
+      const res = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
       const data = await res.json()
-      if (res.ok && data.success && data.user) {
-        set({ user: data.user, token, isPremium: data.user.isPremium || false, authLoading: false })
+      return { ok: res.ok, data }
+    }
+    try {
+      let result
+      try { result = await tryFetch() }
+      catch { await new Promise(r => setTimeout(r, 800)); result = await tryFetch() }
+
+      if (result.ok && result.data?.success && result.data.user) {
+        set({ user: result.data.user, token, isPremium: result.data.user.isPremium || false, authLoading: false })
       } else {
         localStorage.removeItem('walletdna_token')
         set({ user: null, token: null, isPremium: false, authLoading: false })
       }
     } catch {
-      // network error — keep token, don't block UI
-      set({ authLoading: false })
+      // Repeated network failure — clear token to avoid stuck logged-in state.
+      localStorage.removeItem('walletdna_token')
+      set({ user: null, token: null, isPremium: false, authLoading: false })
     }
   },
 

@@ -10,6 +10,7 @@ export default function Login() {
   const { setUser, setToken, setPremium } = useStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
@@ -53,7 +54,7 @@ export default function Login() {
       });
       const data = await res.json();
       if (data.success) {
-        setToken(data.token);
+        setToken(data.token, remember);
         setUser(data.user);
         setPremium(data.user.isPremium);
         toast.success(data.isNew ? 'Account created!' : 'Welcome back!');
@@ -81,7 +82,7 @@ export default function Login() {
       });
       const data = await res.json();
       if (data.success) {
-        setToken(data.token);
+        setToken(data.token, remember);
         setUser(data.user);
         setPremium(data.user.isPremium);
         toast.success('Welcome back!');
@@ -216,6 +217,21 @@ export default function Login() {
                 style={inputStyle}
               />
             </div>
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              color: '#94A3B8', fontSize: '0.82rem', cursor: 'pointer',
+              userSelect: 'none', marginTop: -4,
+            }}>
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                style={{
+                  width: 16, height: 16, accentColor: '#A855F7', cursor: 'pointer',
+                }}
+              />
+              Remember me on this device
+            </label>
             <button type="submit" disabled={loading} style={submitBtnStyle(loading)}>
               {loading ? 'Signing in…' : 'Sign In →'}
             </button>

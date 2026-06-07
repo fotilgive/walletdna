@@ -31,27 +31,45 @@ import useStore from './store/useStore'
 // Redirect to /login if not authenticated, /pricing if not premium.
 // authLoading = true while initAuth() fetches /api/auth/me after F5.
 // Render null during that window to avoid flash-redirect on premium users.
+function AuthSpinner() {
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: '#06060a', color: '#64748B',
+    }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{
+          width: 36, height: 36, margin: '0 auto 14px',
+          border: '3px solid rgba(168,85,247,0.2)',
+          borderTopColor: '#A855F7', borderRadius: '50%',
+          animation: 'wd-spin 0.9s linear infinite',
+        }} />
+        <div style={{ fontSize: '0.78rem', letterSpacing: '0.06em' }}>Loading…</div>
+        <style>{`@keyframes wd-spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    </div>
+  )
+}
+
 function RequireAuth({ children }) {
   const { user, token, authLoading } = useStore()
   const location = useLocation()
-  if (authLoading) return null
-  if (!token) {
+  if (authLoading) return <AuthSpinner />
+  if (!token || !user) {
     if (location.pathname !== '/') sessionStorage.setItem('walletdna_redirect', location.pathname)
     return <Navigate to="/login" replace />
   }
-  if (!user) return null
   return children
 }
 
 function RequirePremium({ children }) {
   const { user, token, isPremium, authLoading } = useStore()
   const location = useLocation()
-  if (authLoading) return null
-  if (!token) {
+  if (authLoading) return <AuthSpinner />
+  if (!token || !user) {
     sessionStorage.setItem('walletdna_redirect', location.pathname)
     return <Navigate to="/login" replace />
   }
-  if (!user) return null
   if (!isPremium && !user?.isPremium) return <Navigate to="/pricing" replace />
   return children
 }

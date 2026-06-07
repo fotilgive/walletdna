@@ -45,7 +45,7 @@ export default function Register() {
       });
       const data = await res.json();
       if (data.success) {
-        setToken(data.token);
+        setToken(data.token, true);
         setUser(data.user);
         setPremium(data.user.isPremium);
         toast.success(data.isNew ? 'Account created!' : 'Welcome back!');
