@@ -3113,24 +3113,22 @@ if (existsSync(join(__dirname, 'dist', 'index.html'))) {
 app.listen(PORT, () => {
   console.log(`🧬 WalletDNA API Server → ${BASE_URL}`);
 
-  // Auto-run backtest on startup if table is empty or stale (>12h old)
-  setTimeout(async () => {
+  // Kick off backtest once on startup, non-blocking.
+  // The script itself checks backtest_metadata.last_run_timestamp and exits early
+  // if a successful run completed within the last 12 hours — so this is safe to
+  // call on every deploy without triggering redundant GeckoTerminal API work.
+  console.log('[BACKTEST] Scheduling startup backtest check (10s delay)...');
+  setTimeout(() => {
     try {
-      const row = db.prepare(`SELECT COUNT(*) as c, MAX(computed_at) as latest FROM signal_backtest`).get();
-      const stale = !row.c || !row.latest || (Date.now() - row.latest) > 12 * 60 * 60 * 1000;
-      if (stale) {
-        console.log('[BACKTEST] Table empty or stale — starting backtest...');
-        const { spawn } = await import('child_process');
-        const child = spawn('node', ['scripts/backtest.js'], {
-          env: { ...process.env },
-          stdio: 'inherit',
-        });
-        child.on('exit', code => console.log(`[BACKTEST] Finished with code ${code}`));
-      } else {
-        console.log(`[BACKTEST] ${row.c} signals cached — skipping.`);
-      }
+      const child = spawn('node', ['scripts/backtest.js'], {
+        cwd: process.cwd(),
+        env: { ...process.env },
+        stdio: 'inherit',
+      });
+      child.on('exit', code => console.log(`[BACKTEST] Process exited with code ${code}`));
+      child.on('error', err => console.error('[BACKTEST] Failed to start process:', err.message));
     } catch (e) {
-      console.error('[BACKTEST] Auto-run failed:', e.message);
+      console.error('[BACKTEST] Startup spawn failed:', e.message);
     }
-  }, 90 * 1000); // 90s after start — give sync time to populate wallets first
+  }, 10 * 1000); // 10s after start — let the server finish binding before spawning
 });

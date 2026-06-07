@@ -8,6 +8,28 @@ import Database from 'better-sqlite3';
 const db = new Database(process.env.DATABASE_PATH || './alpha_engine.db');
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS backtest_metadata (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )
+`);
+
+// ── Staleness guard ──────────────────────────────────────────────────────────
+// Skip the full backtest if one completed successfully in the last 12 hours.
+// The timestamp is written to backtest_metadata so it survives container restarts.
+const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+const metaRow = db.prepare(`SELECT value FROM backtest_metadata WHERE key = 'last_run_timestamp'`).get();
+const lastRun = metaRow ? parseInt(metaRow.value, 10) : 0;
+
+if (lastRun && (Date.now() - lastRun) < TWELVE_HOURS) {
+  const ageMinutes = Math.round((Date.now() - lastRun) / 60000);
+  const nextInMinutes = Math.round((TWELVE_HOURS - (Date.now() - lastRun)) / 60000);
+  console.log(`[BACKTEST] Skipping — last run was ${ageMinutes}m ago (next eligible in ${nextInMinutes}m).`);
+  db.close();
+  process.exit(0);
+}
+
+db.exec(`
   CREATE TABLE IF NOT EXISTS signal_backtest (
     token_address   TEXT PRIMARY KEY,
     token_symbol    TEXT,
@@ -194,6 +216,13 @@ async function main() {
   }
 
   console.log(`\n[BACKTEST] Done. ${ok} computed, ${cachedCount} cached, ${skip} skipped.`);
+
+  // Persist completion timestamp so subsequent invocations can skip if < 12h old.
+  db.prepare(`
+    INSERT INTO backtest_metadata (key, value) VALUES ('last_run_timestamp', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(String(Date.now()));
+
   db.close();
 }
 
