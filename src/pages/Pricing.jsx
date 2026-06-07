@@ -13,22 +13,26 @@ const FEATURES = [
   { icon: '✅', title: 'Signal Proof', desc: 'Every signal tracked with real prices. Wins and losses shown.' },
   { icon: '📲', title: 'Telegram Alerts', desc: 'Cluster forms → message lands in seconds. 24/7 coverage.' },
   { icon: '🏆', title: 'Smart Money Leaderboard', desc: 'Top wallets ranked by verified alpha score. Updated daily.' },
-  { icon: '📊', title: 'Signal History + Backtest', desc: 'See how past signals performed. Avg +43% peak in 30 days.' },
+  { icon: '📊', title: 'Signal History + Backtest', desc: 'See how past signals performed. Backtest data verified on-chain.' },
   { icon: '♾️', title: 'All Future Features', desc: 'One payment. Every update forever. No subscription.' },
 ]
 
-const PROOF = [
-  { label: 'Avg signal peak', value: '+43%', sub: 'within 30 days' },
-  { label: 'Hit rate ≥20%', value: '47%', sub: 'of signals' },
-  { label: 'Verified signals', value: '57+', sub: 'with real data' },
-  { label: 'Alpha wallets', value: '370+', sub: 'tracked live' },
-]
+// PROOF metrics are loaded dynamically from /api/stats (not hardcoded)
+// This ensures we show only real data
 
 export default function Pricing() {
   const navigate = useNavigate()
-  const { user, isPremium } = useStore()
+  const { user, isPremium, globalStats } = useStore()
   const [licenseKey, setLicenseKey] = useState('')
   const [activating, setActivating] = useState(false)
+  const [stats, setStats] = useState(null)
+
+  React.useEffect(() => {
+    fetch('/api/stats')
+      .then(r => r.json())
+      .then(d => setStats(d))
+      .catch(() => {})
+  }, [])
 
   const handleActivate = async () => {
     const key = licenseKey.trim()
@@ -95,6 +99,14 @@ export default function Pricing() {
     )
   }
 
+  // Render dynamic proof metrics from real API data
+  const proofMetrics = [
+    { label: 'Verified signals', value: stats?.verifiedSignals || 0, sub: 'with real data' },
+    { label: 'Alpha wallets', value: stats?.verifiedWallets || 0, sub: 'tracked live' },
+    { label: 'Signals today', value: stats?.signalsLast24h || 0, sub: 'real trades' },
+    { label: 'Active clusters', value: stats?.activeClusters || 0, sub: 'converging now' },
+  ]
+
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 16px 60px' }}>
@@ -117,22 +129,22 @@ export default function Pricing() {
             </span>
           </h1>
           <p style={{ color: '#64748B', fontSize: '1rem', maxWidth: 420, margin: '0 auto' }}>
-            370+ verified alpha wallets. Real clusters. Real signals. Pay once, use forever.
+            {stats?.verifiedWallets > 0 ? `${stats.verifiedWallets}+ verified alpha wallets` : 'Verified alpha wallets'}. Real clusters. Real signals. Pay once, use forever.
           </p>
         </div>
 
-        {/* Proof numbers */}
+        {/* Proof numbers — REAL DATA ONLY */}
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
           gap: 12, marginBottom: 36,
         }}>
-          {PROOF.map(p => (
+          {proofMetrics.map(p => (
             <div key={p.label} style={{
               background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
               borderRadius: 12, padding: '16px 12px', textAlign: 'center',
             }}>
               <div style={{ fontSize: '1.6rem', fontWeight: 900, fontFamily: 'var(--mono, monospace)', color: '#A855F7', lineHeight: 1 }}>
-                {p.value}
+                {p.value > 0 ? p.value : '—'}
               </div>
               <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: 4 }}>{p.label}</div>
               <div style={{ fontSize: '0.65rem', color: '#475569' }}>{p.sub}</div>

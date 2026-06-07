@@ -85,7 +85,7 @@ export default function Sidebar() {
       <div className="sidebar-footer">
         <div style={{ fontSize: '0.7rem', color: 'var(--text-3)', marginBottom: 6, paddingLeft: 4 }}>
           <span style={{ fontFamily: 'var(--mono)', color: 'var(--cyan)', fontWeight: 700 }}>
-            {globalStats.walletsTracked || 300}
+            {globalStats.walletsTracked > 0 ? globalStats.walletsTracked : '—'}
           </span>
           {' '}{t('nav_tracked')}
         </div>
