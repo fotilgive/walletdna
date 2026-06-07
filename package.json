@@ -30,5 +30,8 @@
     "@vitejs/plugin-react": "^4.3.1",
     "concurrently": "^8.2.2",
     "vite": "^5.3.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }
