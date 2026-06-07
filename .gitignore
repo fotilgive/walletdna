@@ -13,3 +13,4 @@ arbitrage_logs.json
 *.corrupted
 # Marketing / large assets
 marketing/
+.vercel

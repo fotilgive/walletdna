@@ -26,6 +26,7 @@ function fmtMins(m) {
 export default function LiveTicker() {
   const navigate = useNavigate()
   const [items, setItems] = useState([])
+  const [preview, setPreview] = useState(false)
   const railRef = useRef(null)
 
   useEffect(() => {
@@ -34,7 +35,10 @@ export default function LiveTicker() {
       try {
         const r = await apiFetch('/api/ticker')
         const d = await r.json()
-        if (alive && d.success) setItems(d.ticker || [])
+        if (alive && d.success) {
+          setItems(d.ticker || [])
+          setPreview(d.preview || false)
+        }
       } catch {}
     }
     // Load immediately on mount
@@ -84,7 +88,13 @@ export default function LiveTicker() {
           <div className="wd-live-dot" />
           LIVE
         </div>
-        <span>Smart money trades from top alpha wallets</span>
+        <span>
+          {preview ? (
+            <>Smart money trades <span style={{ color: 'var(--cyan)' }}>— Premium shows more</span></>
+          ) : (
+            'Smart money trades from top alpha wallets'
+          )}
+        </span>
       </div>
       <div style={{
         position: 'absolute', top: 0, bottom: 0, left: 0, width: 80,
