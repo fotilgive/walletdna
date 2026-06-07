@@ -1,0 +1,56 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "node server.js",
+    "healthcheckPath": "/api/stats"
+  },
+  "env": {
+    "BASE_RPC_URL": {
+      "description": "Base Network RPC URL"
+    },
+    "PORT": {
+      "description": "Server port",
+      "value": "3001"
+    },
+    "BASE_URL": {
+      "description": "Base URL for the server"
+    },
+    "PUBLIC_APP_URL": {
+      "description": "Public URL for the frontend"
+    },
+    "JWT_SECRET": {
+      "description": "JWT secret for authentication"
+    },
+    "ADMIN_TOKEN": {
+      "description": "Admin token for protected endpoints"
+    },
+    "TELEGRAM_BOT_TOKEN": {
+      "description": "Telegram bot token (optional)"
+    },
+    "TELEGRAM_CHAT_ID": {
+      "description": "Telegram chat ID (optional)"
+    },
+    "BROADCAST_BOT_TOKEN": {
+      "description": "Broadcast bot token (optional)"
+    },
+    "BROADCAST_CHANNEL_ID": {
+      "description": "Broadcast channel ID (optional)"
+    },
+    "GUMROAD_PRODUCT_ID": {
+      "description": "Gumroad product ID"
+    },
+    "GUMROAD_WEBHOOK_SECRET": {
+      "description": "Gumroad webhook secret"
+    },
+    "SUPPORT_EMAIL": {
+      "description": "Support email address"
+    },
+    "DATABASE_PATH": {
+      "description": "Database file path",
+      "value": "./alpha_engine.db"
+    }
+  }
+}
