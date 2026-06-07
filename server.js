@@ -2593,6 +2593,18 @@ app.get('/api/alpha-feed', async (req, res) => {
       LIMIT 40
     `).all();
 
+    // Batch participant counts to avoid N+1 queries
+    const participantCounts = {};
+    const uniqueTokens = [...new Set(trades.map(t => t.token_address))];
+    for (const tokenAddr of uniqueTokens) {
+      const row = db.prepare(`
+        SELECT COUNT(DISTINCT address) as count 
+        FROM wallet_trades 
+        WHERE token_address = ?
+      `).get(tokenAddr);
+      participantCounts[tokenAddr] = row?.count || 1;
+    }
+
     const feed = trades.map(t => {
       const minsAgo = Math.max(1, Math.round((Date.now() - t.timestamp) / 60000));
       const entryPrice = t.token_amount > 0 ? (t.usd_value / t.token_amount) : 0;
@@ -2611,12 +2623,7 @@ app.get('/api/alpha-feed', async (req, res) => {
       const actionText = t.type === 'BUY' ? 'accumulated' : 'disposed of';
       const text = `${labelStr} ${actionText} $${t.usd_value.toLocaleString(undefined, {maximumFractionDigits: 2})} worth of ${t.token_symbol} (${t.token_name})`;
 
-      const participantsRow = db.prepare(`
-        SELECT COUNT(DISTINCT address) as count 
-        FROM wallet_trades 
-        WHERE token_address = ? AND timestamp >= ?
-      `).get(t.token_address, t.timestamp - 24 * 60 * 60 * 1000);
-      const participants = participantsRow?.count || 1;
+      const participants = participantCounts[t.token_address] || 1;
 
       return {
         id: `sig_${t.tx_hash}_${t.type}`,

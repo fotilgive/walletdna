@@ -206,9 +206,9 @@ export default function Home() {
     const load = async () => {
       try {
         const [cRes, fRes, bRes] = await Promise.all([
-          apiFetch('/api/clusters').then(r => r.json()),
-          apiFetch('/api/alpha-feed').then(r => r.json()),
-          fetch('/api/backtest').then(r => r.json()),
+          apiFetch('/api/clusters').then(r => r.json()).catch(() => ({ success: false })),
+          apiFetch('/api/alpha-feed').then(r => r.json()).catch(() => ({ success: false })),
+          apiFetch('/api/backtest').then(r => r.json()).catch(() => ({ success: false })),
         ])
         if (cRes.success) setClusters(cRes.clusters || [])
         if (fRes.success) setFeed(fRes.feed || [])
