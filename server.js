@@ -707,8 +707,10 @@ app.get('/api/stats', async (req, res) => {
   const totalTrades = db.prepare(
     `SELECT COUNT(*) as c FROM wallet_trades t ${QUALITY_FILTER}`
   ).get().c;
+  // lastSignalMinsAgo = last trade (any type) from any tracked wallet — shows system is alive
   const lastBuy = db.prepare(
-    `SELECT MAX(t.timestamp) as ts FROM wallet_trades t ${QUALITY_FILTER} AND t.type='BUY'`
+    `SELECT MAX(t.timestamp) as ts FROM wallet_trades t
+     JOIN tracked_wallets w ON w.address = t.address`
   ).get();
   const lastSignalMinsAgo = lastBuy?.ts ? Math.round((Date.now() - lastBuy.ts) / 60000) : null;
   const signalsLast24h = db.prepare(
