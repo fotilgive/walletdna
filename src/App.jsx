@@ -130,7 +130,6 @@ export default function App() {
         <Sidebar />
         <div className="main-content">
           <TopBar />
-          <LiveTicker />
           <main className="page-content">
             <ErrorBoundary>
             <Routes>

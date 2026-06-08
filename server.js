@@ -2035,58 +2035,124 @@ app.post('/api/alerts/tg-unlink', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-app.get('/api/alerts/config', requireAuth, requirePremium, (req, res) => {
-  const c = db.prepare("SELECT enabled, chat_id, (bot_token IS NOT NULL AND length(bot_token) > 0) as has_token FROM alert_config WHERE id = 1").get();
-  res.json({ success: true, enabled: !!c?.enabled, chatId: c?.chat_id || '', hasToken: !!c?.has_token });
+// ── PER-USER BOT CONFIG ─────────────────────────────────────────────────────
+// Each premium user brings their own Telegram bot token + chat_id.
+// Signals are sent via their own bot — no shared channel.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Create per-user config table
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS user_alert_config (
+    user_id   INTEGER PRIMARY KEY,
+    bot_token TEXT NOT NULL,
+    chat_id   TEXT NOT NULL,
+    enabled   INTEGER DEFAULT 1,
+    created_at INTEGER
+  )`);
+} catch {}
+
+// GET — load current user's bot config
+app.get('/api/alerts/my-config', requireAuth, requirePremium, (req, res) => {
+  const c = db.prepare('SELECT chat_id, enabled, (length(bot_token) > 0) as has_token FROM user_alert_config WHERE user_id = ?').get(req.user.id);
+  res.json({ success: true, configured: !!c, chatId: c?.chat_id || '', enabled: !!c?.enabled, hasToken: !!c?.has_token });
 });
 
-app.post('/api/alerts/config', requireAdmin, (req, res) => {
-  const { botToken, chatId, enabled } = req.body || {};
-  if (enabled && (!botToken || !chatId)) {
-    return res.status(400).json({ success: false, error: 'botToken and chatId required to enable' });
-  }
+// POST — save / update bot config
+app.post('/api/alerts/my-config', requireAuth, requirePremium, (req, res) => {
+  const { botToken, chatId } = req.body || {};
+  if (!botToken || !chatId) return res.status(400).json({ success: false, error: 'botToken and chatId required' });
   db.prepare(`
-    INSERT INTO alert_config (id, bot_token, chat_id, enabled) VALUES (1, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET bot_token=excluded.bot_token, chat_id=excluded.chat_id, enabled=excluded.enabled
-  `).run(botToken || '', chatId || '', enabled ? 1 : 0);
-  res.json({ success: true, enabled: !!enabled });
+    INSERT INTO user_alert_config (user_id, bot_token, chat_id, enabled, created_at)
+    VALUES (?, ?, ?, 1, ?)
+    ON CONFLICT(user_id) DO UPDATE SET bot_token=excluded.bot_token, chat_id=excluded.chat_id, enabled=1, created_at=excluded.created_at
+  `).run(req.user.id, botToken.trim(), chatId.trim(), Date.now());
+  res.json({ success: true });
+});
+
+// POST — toggle enabled/disabled
+app.post('/api/alerts/my-config/toggle', requireAuth, requirePremium, (req, res) => {
+  const c = db.prepare('SELECT enabled FROM user_alert_config WHERE user_id = ?').get(req.user.id);
+  if (!c) return res.status(404).json({ success: false, error: 'No config' });
+  const next = c.enabled ? 0 : 1;
+  db.prepare('UPDATE user_alert_config SET enabled = ? WHERE user_id = ?').run(next, req.user.id);
+  res.json({ success: true, enabled: !!next });
+});
+
+// DELETE — remove config
+app.delete('/api/alerts/my-config', requireAuth, requirePremium, (req, res) => {
+  db.prepare('DELETE FROM user_alert_config WHERE user_id = ?').run(req.user.id);
+  res.json({ success: true });
+});
+
+// POST — send test message via user's own bot
+app.post('/api/alerts/test', requireAuth, requirePremium, async (req, res) => {
+  const c = db.prepare('SELECT bot_token, chat_id FROM user_alert_config WHERE user_id = ? AND enabled = 1').get(req.user.id);
+  if (!c) return res.status(400).json({ success: false, error: 'No active config' });
+  const ok = await sendTelegram(c.bot_token, c.chat_id,
+    `✅ *WalletDNA test message*\n\nYour bot is connected and working.\nCluster signals will arrive here in real-time.`);
+  res.json({ success: ok, error: ok ? null : 'Telegram rejected the message — check bot token and chat_id' });
+});
+
+// GET — helper: resolve chat_id from bot token using getUpdates
+// User must send any message to their bot first.
+app.get('/api/alerts/get-chat-id', requireAuth, requirePremium, async (req, res) => {
+  const { botToken } = req.query;
+  if (!botToken) return res.status(400).json({ success: false, error: 'botToken required' });
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates?limit=1&timeout=0`).then(r => r.json());
+    if (!r.ok) return res.json({ success: false, error: r.description || 'Invalid token' });
+    const update = r.result?.[0];
+    const chatId = update?.message?.chat?.id || update?.channel_post?.chat?.id;
+    if (!chatId) return res.json({ success: false, error: 'No messages found. Send any message to your bot first, then retry.' });
+    res.json({ success: true, chatId: String(chatId) });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
 });
 
 async function sendTelegram(botToken, chatId, text) {
-  const r = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text }),
-  }).then(r => r.json());
-  return r.ok;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true }),
+    }).then(r => r.json());
+    return !!r.ok;
+  } catch { return false; }
 }
 
-// Auto-alert loop: every 5 min, send any new cluster the user hasn't been alerted to
+// Auto-alert loop — runs every 5 min, sends to all enabled premium users via their own bots
 async function runAutoAlerts() {
   try {
-    const cfg = db.prepare('SELECT * FROM alert_config WHERE id = 1 AND enabled = 1').get();
-    if (!cfg?.bot_token || !cfg?.chat_id) return;
+    const configs = db.prepare(`
+      SELECT uac.user_id, uac.bot_token, uac.chat_id
+      FROM user_alert_config uac
+      JOIN users u ON u.id = uac.user_id
+      WHERE uac.enabled = 1 AND u.is_premium = 1
+    `).all();
+    if (!configs.length) return;
 
-    const clRes = await fetch(`${BASE_URL}/api/clusters`).then(r => r.json());
+    const clRes = await fetch(`${BASE_URL}/api/clusters`).then(r => r.json()).catch(() => ({}));
     const clusters = (clRes.clusters || []).filter(c => c.urgencyScore >= 60).slice(0, 5);
-    for (const c of clusters) {
-      const already = db.prepare('SELECT 1 FROM sent_alerts WHERE signal_id = ?').get(c.id);
-      if (already) continue;
-      const ok = await sendTelegram(cfg.bot_token, cfg.chat_id, buildClusterAlert(c));
-      if (ok) db.prepare('INSERT OR REPLACE INTO sent_alerts (signal_id, sent_at) VALUES (?, ?)').run(c.id, Date.now());
-      await new Promise(r => setTimeout(r, 1000));
-    }
-
-    // Exit alerts
-    const exRes = await fetch(`${BASE_URL}/api/exits`).then(r => r.json());
+    const exRes = await fetch(`${BASE_URL}/api/exits`).then(r => r.json()).catch(() => ({}));
     const exits = (exRes.exits || []).slice(0, 3);
-    for (const e of exits) {
-      const exitId = `exit_${e.token?.address || e.tokenAddress}_${Math.floor(Date.now() / 3600000)}`;
-      const already = db.prepare('SELECT 1 FROM sent_alerts WHERE signal_id = ?').get(exitId);
-      if (already) continue;
-      const msg = buildExitAlert(e);
-      const ok = await sendTelegram(cfg.bot_token, cfg.chat_id, msg);
-      if (ok) db.prepare('INSERT OR REPLACE INTO sent_alerts (signal_id, sent_at) VALUES (?, ?)').run(exitId, Date.now());
-      await new Promise(r => setTimeout(r, 1000));
+
+    for (const cfg of configs) {
+      // Cluster alerts
+      for (const c of clusters) {
+        const sigId = `u${cfg.user_id}_cl_${c.id}`;
+        if (db.prepare('SELECT 1 FROM sent_alerts WHERE signal_id = ?').get(sigId)) continue;
+        const ok = await sendTelegram(cfg.bot_token, cfg.chat_id, buildClusterAlert(c));
+        if (ok) db.prepare('INSERT OR REPLACE INTO sent_alerts (signal_id, sent_at) VALUES (?, ?)').run(sigId, Date.now());
+        await new Promise(r => setTimeout(r, 300));
+      }
+      // Exit alerts
+      for (const e of exits) {
+        const exitId = `u${cfg.user_id}_exit_${e.token?.address || e.tokenAddress}_${Math.floor(Date.now() / 3600000)}`;
+        if (db.prepare('SELECT 1 FROM sent_alerts WHERE signal_id = ?').get(exitId)) continue;
+        const ok = await sendTelegram(cfg.bot_token, cfg.chat_id, buildExitAlert(e));
+        if (ok) db.prepare('INSERT OR REPLACE INTO sent_alerts (signal_id, sent_at) VALUES (?, ?)').run(exitId, Date.now());
+        await new Promise(r => setTimeout(r, 300));
+      }
     }
   } catch (e) { console.error('[AUTO-ALERT]', e.message); }
 }
