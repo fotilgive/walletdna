@@ -35,7 +35,7 @@ export default function Alerts() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { if (isPremium) load() else setLoading(false) }, [isPremium])
+  useEffect(() => { if (isPremium) { load() } else { setLoading(false) } }, [isPremium])
 
   async function save() {
     if (!botToken.trim() || !chatId.trim()) { setSaveErr('Both fields required'); return }
