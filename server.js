@@ -191,8 +191,22 @@ app.post('/api/webhooks/gumroad', async (req, res) => {
           await sendWelcomeEmail({ to: purchaser_email, password: plainPassword });
         } catch (mailErr) {
           console.error('[GUMROAD] Failed to send welcome email:', mailErr.message);
-          // Don't fail the webhook — user is already created and activated
         }
+      }
+
+      // Notify admin via Telegram
+      const adminChatId = process.env.ADMIN_TELEGRAM_CHAT_ID;
+      const adminBotToken = process.env.TELEGRAM_BOT_TOKEN;
+      if (adminChatId && adminBotToken) {
+        const credLine = plainPassword
+          ? `\n🔑 Password: \`${plainPassword}\``
+          : `\n♻️ Existing user — password unchanged`;
+        const msg = `🛒 *New purchase!*\n\n📧 Email: \`${purchaser_email}\`${credLine}\n🎫 License: \`${license_key}\`\n\n✅ Account activated. Welcome email sent.`;
+        fetch(`https://api.telegram.org/bot${adminBotToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: adminChatId, text: msg, parse_mode: 'Markdown' }),
+        }).catch(() => {});
       }
     }
 
