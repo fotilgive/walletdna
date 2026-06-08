@@ -1996,9 +1996,44 @@ db.exec(`
     username TEXT,
     first_name TEXT,
     subscribed_at INTEGER,
-    active INTEGER DEFAULT 1
+    active INTEGER DEFAULT 1,
+    user_id INTEGER
+  );
+  CREATE TABLE IF NOT EXISTS telegram_link_tokens (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    used INTEGER DEFAULT 0
   );
 `);
+// Add user_id column to existing telegram_subscribers if missing (migration)
+try { db.exec(`ALTER TABLE telegram_subscribers ADD COLUMN user_id INTEGER`); } catch {}
+// Add telegram_link_tokens if missing (migration)
+try { db.exec(`CREATE TABLE IF NOT EXISTS telegram_link_tokens (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at INTEGER NOT NULL, used INTEGER DEFAULT 0)`); } catch {}
+
+const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'walletdna_signals_bot';
+
+// Generate one-time deep-link token for connecting Telegram
+app.post('/api/alerts/link-token', requireAuth, (req, res) => {
+  const userId = req.user.id;
+  // Clean up old tokens for this user
+  db.prepare('DELETE FROM telegram_link_tokens WHERE user_id = ? OR created_at < ?').run(userId, Date.now() - 10 * 60 * 1000);
+  const token = randomBytes(16).toString('hex');
+  db.prepare('INSERT INTO telegram_link_tokens (token, user_id, created_at, used) VALUES (?, ?, ?, 0)').run(token, userId, Date.now());
+  res.json({ success: true, url: `https://t.me/${BOT_USERNAME}?start=${token}`, expiresIn: 600 });
+});
+
+// Check if current user has Telegram linked
+app.get('/api/alerts/tg-status', requireAuth, (req, res) => {
+  const sub = db.prepare('SELECT chat_id, username, first_name, active FROM telegram_subscribers WHERE user_id = ?').get(req.user.id);
+  res.json({ success: true, linked: !!sub, active: sub?.active === 1, username: sub?.username || null, firstName: sub?.firstName || null });
+});
+
+// Unlink Telegram from account
+app.post('/api/alerts/tg-unlink', requireAuth, (req, res) => {
+  db.prepare('UPDATE telegram_subscribers SET active = 0, user_id = NULL WHERE user_id = ?').run(req.user.id);
+  res.json({ success: true });
+});
 
 app.get('/api/alerts/config', requireAuth, requirePremium, (req, res) => {
   const c = db.prepare("SELECT enabled, chat_id, (bot_token IS NOT NULL AND length(bot_token) > 0) as has_token FROM alert_config WHERE id = 1").get();
@@ -2132,8 +2167,12 @@ async function sendTelegramMsg(chatId, text, replyMarkup = null) {
 
 async function sendBroadcast(text) {
   if (!BROADCAST_BOT) return false;
-  // Send to all active subscribers
-  const subs = db.prepare('SELECT chat_id FROM telegram_subscribers WHERE active = 1').all();
+  // Only send to active subscribers with premium accounts
+  const subs = db.prepare(`
+    SELECT ts.chat_id FROM telegram_subscribers ts
+    JOIN users u ON u.id = ts.user_id
+    WHERE ts.active = 1 AND u.is_premium = 1
+  `).all();
   let sent = 0;
   for (const sub of subs) {
     const ok = await sendTelegramMsg(sub.chat_id, text);
@@ -2485,30 +2524,96 @@ app.post('/api/telegram/webhook', express.json(), async (req, res) => {
   const isAdmin = ADMIN_TG_CHAT && chatId === ADMIN_TG_CHAT;
 
   if (text.startsWith('/start')) {
-    db.prepare(`
-      INSERT INTO telegram_subscribers (chat_id, username, first_name, subscribed_at, active)
-      VALUES (?, ?, ?, ?, 1)
-      ON CONFLICT(chat_id) DO UPDATE SET active=1, username=excluded.username, first_name=excluded.first_name
-    `).run(chatId, username, firstName, Date.now());
-    const count = db.prepare('SELECT COUNT(*) as c FROM telegram_subscribers WHERE active = 1').get().c;
+    const param = raw.split(' ')[1] || '';
+    if (param) {
+      // Deep-link token → link Telegram to WalletDNA account
+      const tokenRow = db.prepare(
+        'SELECT user_id FROM telegram_link_tokens WHERE token = ? AND used = 0 AND created_at > ?'
+      ).get(param, Date.now() - 10 * 60 * 1000);
+
+      if (!tokenRow) {
+        await sendTelegramMsg(chatId,
+          '❌ *Link expired or invalid.*\n\nGo back to WalletDNA → Alerts and generate a new link.',
+          { inline_keyboard: [[{ text: '🔗 Open WalletDNA', url: PUBLIC_APP_URL + '/alerts' }]] });
+        return;
+      }
+
+      // Mark token as used
+      db.prepare('UPDATE telegram_link_tokens SET used = 1 WHERE token = ?').run(param);
+
+      // Save / update subscriber with user_id
+      db.prepare(`
+        INSERT INTO telegram_subscribers (chat_id, username, first_name, subscribed_at, active, user_id)
+        VALUES (?, ?, ?, ?, 1, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET
+          active=1, username=excluded.username,
+          first_name=excluded.first_name, user_id=excluded.user_id
+      `).run(chatId, username, firstName, Date.now(), tokenRow.user_id);
+
+      const user = db.prepare('SELECT email, is_premium FROM users WHERE id = ?').get(tokenRow.user_id);
+      const isPrem = user?.is_premium === 1;
+
+      await sendTelegramMsg(chatId,
+        `✅ *Telegram linked to WalletDNA!*\n\n` +
+        `Account: \`${user?.email || 'unknown'}\`\n` +
+        `Status: ${isPrem ? '⭐ PRO — signals active' : '🔒 No premium — upgrade to receive signals'}\n\n` +
+        (isPrem
+          ? '_You will receive smart money cluster alerts in real-time._'
+          : `_Buy WalletDNA to activate signals: ${PUBLIC_APP_URL}_`),
+        { inline_keyboard: [[{ text: '📊 Status', callback_data: 'menu:status' }, { text: '❓ Help', callback_data: 'menu:help' }]] });
+      return;
+    }
+
+    // Plain /start — no token
+    const existingSub = db.prepare('SELECT user_id, active FROM telegram_subscribers WHERE chat_id = ?').get(chatId);
+    if (existingSub?.user_id) {
+      const user = db.prepare('SELECT email, is_premium FROM users WHERE id = ?').get(existingSub.user_id);
+      await sendTelegramMsg(chatId,
+        `🧬 *WalletDNA Bot*\n\n` +
+        `Linked to: \`${user?.email || '?'}\`\n` +
+        `Status: ${user?.is_premium ? '⭐ PRO — signals active' : '🔒 No premium'}\n\n` +
+        `_Go to WalletDNA → Alerts to manage your connection._`,
+        { inline_keyboard: [[{ text: '📊 Status', callback_data: 'menu:status' }, { text: '⏸ Unsubscribe', callback_data: 'menu:unsubscribe' }]] });
+    } else {
+      await sendTelegramMsg(chatId,
+        `🧬 *WalletDNA Bot*\n\n` +
+        `To receive smart money signals, connect this bot to your WalletDNA account:\n\n` +
+        `1. Go to ${PUBLIC_APP_URL}/alerts\n` +
+        `2. Click "Connect Telegram"\n` +
+        `3. Open the link — you'll be linked automatically`,
+        { inline_keyboard: [[{ text: '🔗 Open WalletDNA Alerts', url: PUBLIC_APP_URL + '/alerts' }]] });
+    }
+  } else if (text.startsWith('/status')) {
+    const sub = db.prepare('SELECT user_id, active FROM telegram_subscribers WHERE chat_id = ?').get(chatId);
+    if (!sub?.user_id) {
+      await sendTelegramMsg(chatId, '❌ Not linked. Go to WalletDNA → Alerts to connect.',
+        { inline_keyboard: [[{ text: '🔗 Connect', url: PUBLIC_APP_URL + '/alerts' }]] });
+      return;
+    }
+    const user = db.prepare('SELECT email, is_premium FROM users WHERE id = ?').get(sub.user_id);
+    const clRes = await fetch(`${BASE_URL}/api/clusters`).then(r => r.json()).catch(() => ({}));
     await sendTelegramMsg(chatId,
-      `🧬 *Welcome to WalletDNA Bot!*\n\nYou are now subscribed to smart money cluster alerts on Base.\n\n_${count} subscribers · alerts every ≤10 min_`,
-      mainMenuKeyboard(isAdmin));
-  } else if (text.startsWith('/menu') || text.startsWith('/help')) {
-    await sendTelegramMsg(chatId, '*WalletDNA Bot*\n\nChoose an action:', mainMenuKeyboard(isAdmin));
-  } else if (text.startsWith('/admin') && isAdmin) {
-    await sendTelegramMsg(chatId, '*👨‍💼 Admin Panel*\n\nManage users and view system stats.', adminMenuKeyboard());
+      `📊 *Your WalletDNA Status*\n\n` +
+      `Account: \`${user?.email || '?'}\`\n` +
+      `Subscription: ${user?.is_premium ? '⭐ PRO — signals active' : '🔒 No premium'}\n` +
+      `Alerts: ${sub.active ? '🟢 On' : '⏸ Paused'}\n` +
+      `Active clusters: ${clRes.clusters?.length || 0}`,
+      { inline_keyboard: [[{ text: '⏸ Pause alerts', callback_data: 'menu:unsubscribe' }]] });
   } else if (text.startsWith('/stop')) {
     db.prepare('UPDATE telegram_subscribers SET active = 0 WHERE chat_id = ?').run(chatId);
-    await sendTelegramMsg(chatId, '👋 Unsubscribed.', mainMenuKeyboard(isAdmin));
-  } else if (text.startsWith('/status')) {
-    const count = db.prepare('SELECT COUNT(*) as c FROM telegram_subscribers WHERE active = 1').get().c;
-    const clRes = await fetch(`${BASE_URL}/api/clusters`).then(r => r.json()).catch(() => ({}));
-    const clusters = clRes.clusters?.length || 0;
-    await sendTelegramMsg(chatId, `📊 ${clusters} clusters · ${count} subscribers`, mainMenuKeyboard(isAdmin));
+    await sendTelegramMsg(chatId, '⏸ *Alerts paused.*\n\nSend /start to resume.',
+      { inline_keyboard: [[{ text: '🔗 Open WalletDNA', url: PUBLIC_APP_URL + '/alerts' }]] });
+  } else if (text.startsWith('/menu') || text.startsWith('/help')) {
+    await sendTelegramMsg(chatId,
+      '*WalletDNA Bot — Commands*\n\n' +
+      '/status — check your account & subscription\n' +
+      '/stop — pause alerts\n' +
+      '/start — resume alerts or relink account',
+      { inline_keyboard: [[{ text: '📊 Status', callback_data: 'menu:status' }]] });
+  } else if (text.startsWith('/admin') && isAdmin) {
+    await sendTelegramMsg(chatId, '*👨‍💼 Admin Panel*', adminMenuKeyboard());
   } else {
-    // any unknown text — show menu
-    await sendTelegramMsg(chatId, '*WalletDNA Bot*\n\nUse the buttons below:', mainMenuKeyboard(isAdmin));
+    await sendTelegramMsg(chatId, 'Use /status, /stop, or /help.', null);
   }
 });
 
