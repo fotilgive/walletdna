@@ -123,6 +123,82 @@ app.use(express.json());
 // Setup authentication routes
 setupAuthRoutes(app);
 
+// ── LEMON SQUEEZY WEBHOOK ────────────────────────────────────────────────────
+import crypto from 'crypto';
+
+app.post('/api/webhooks/lemonsqueezy', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET || 'walletdna_ls_secret_2026';
+    const sig = req.headers['x-signature'];
+    const hmac = crypto.createHmac('sha256', secret).update(req.body).digest('hex');
+    if (sig !== hmac) {
+      console.warn('[LS] Invalid signature');
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    const payload = JSON.parse(req.body.toString());
+    const eventName = payload.meta?.event_name;
+    const data = payload.data?.attributes;
+
+    if (eventName === 'order_created' && data?.status === 'paid') {
+      const purchaser_email = data.user_email;
+      const license_key = payload.data?.relationships?.license_keys?.data?.[0]?.id || null;
+
+      let user = getUserByEmail(purchaser_email);
+      let plainPassword = null;
+
+      if (!user) {
+        plainPassword = generatePassword();
+        const { hashPassword } = await import('./auth.js');
+        const passwordHash = await hashPassword(plainPassword);
+        const result = createUser(purchaser_email, passwordHash);
+        if (result.success) {
+          user = getUserByEmail(purchaser_email);
+          console.log(`[LS] Created user for ${purchaser_email}`);
+        }
+      }
+
+      if (user) {
+        // Mark premium directly (no Gumroad license needed)
+        db.prepare('UPDATE users SET is_premium = 1 WHERE id = ?').run(user.id);
+        console.log(`[LS] Premium activated for ${purchaser_email}`);
+
+        if (plainPassword) {
+          try { await sendWelcomeEmail({ to: purchaser_email, password: plainPassword }); } catch {}
+        }
+
+        // Notify admin via Telegram
+        const adminChatId = process.env.ADMIN_TELEGRAM_CHAT_ID;
+        const adminBotToken = process.env.TELEGRAM_BOT_TOKEN;
+        if (adminChatId && adminBotToken) {
+          const credLine = plainPassword ? `\n🔑 Password: \`${plainPassword}\`` : `\n♻️ Existing user`;
+          const msg = `🛒 *New purchase! (Lemon Squeezy)*\n\n📧 Email: \`${purchaser_email}\`${credLine}\n\n✅ Premium activated. Welcome email sent.`;
+          fetch(`https://api.telegram.org/bot${adminBotToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: adminChatId, text: msg, parse_mode: 'Markdown' }),
+          }).catch(() => {});
+        }
+      }
+    }
+
+    if (eventName === 'order_refunded') {
+      const purchaser_email = payload.data?.attributes?.user_email;
+      if (purchaser_email) {
+        const user = getUserByEmail(purchaser_email);
+        if (user) db.prepare('UPDATE users SET is_premium = 0 WHERE id = ?').run(user.id);
+        console.log(`[LS] Refund — premium removed for ${purchaser_email}`);
+      }
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[LS] Webhook error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Gumroad webhook endpoint
 // Verification: product_id must match env, then license verified via Gumroad API.
 // Gumroad does not use HMAC — product_id check + API verification is the standard approach.
