@@ -97,6 +97,7 @@ input, textarea, select { font-family: var(--font); }
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  margin-left: var(--sidebar-w);
 }
 .page-content {
   flex: 1;
