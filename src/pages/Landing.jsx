@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import useStore from '../store/useStore'
+import { apiFetch } from '../utils/api'
 
 const GUMROAD = import.meta.env.VITE_GUMROAD_URL || 'https://walletdna.gumroad.com/l/walletdna'
 const PRICE = 149
@@ -33,22 +34,22 @@ export default function Landing() {
   useEffect(() => {
     if (token && user) { navigate('/'); return }
     Promise.all([
-      fetch('/api/stats').then(r => r.json()),
-      fetch('/api/backtest').then(r => r.json()),
+      apiFetch('/api/stats').then(r => r.json()).catch(() => null),
+      apiFetch('/api/backtest').then(r => r.json()).catch(() => null),
     ]).then(([s, d]) => {
-      setLiveStats(s)
-      if (d.computed) {
+      if (s) setLiveStats(s)
+      if (d && d.computed) {
         setBt(d.summary)
         setWinners((d.signals || []).filter(x => x.peakGain >= 50).slice(0, 6))
       }
-    }).catch(() => {})
+    })
   }, [])
 
-  const walletsTracked = liveStats?.verifiedWallets ?? 37
-  const totalTrades = liveStats?.totalTrades ?? 85000
-  const winRate = bt?.peakWinRate ?? 47
-  const avgGain = bt?.avgPeakGain ?? 43
-  const sampleSize = bt?.sampleSize ?? 57
+  const walletsTracked = liveStats?.verifiedWallets ?? '-'
+  const totalTrades = liveStats?.totalTrades ?? '-'
+  const winRate = bt?.peakWinRate ?? '-'
+  const avgGain = bt?.avgPeakGain ?? '-'
+  const sampleSize = bt?.sampleSize ?? '-'
   const best = bt?.best
 
   return (
@@ -87,7 +88,7 @@ export default function Landing() {
             <span style={{ color: 'var(--text-1)', fontWeight: 700 }}>{walletsTracked}</span> wallets tracked
           </span>
           <span style={{ color: 'var(--text-3)' }}>
-            <span style={{ color: 'var(--text-1)', fontWeight: 700 }}>{totalTrades.toLocaleString()}</span> trades analyzed
+            <span style={{ color: 'var(--text-1)', fontWeight: 700 }}>{typeof totalTrades === 'number' ? totalTrades.toLocaleString() : totalTrades}</span> trades analyzed
           </span>
           {liveStats?.lastSignalMinsAgo != null && (
             <span style={{ color: 'var(--text-3)' }}>
@@ -381,7 +382,7 @@ export default function Landing() {
             <span style={{ color: 'var(--text-3)', fontSize: '0.55em', fontWeight: 600 }}>You could be watching it.</span>
           </h2>
           <p style={{ color: 'var(--text-2)', marginBottom: 36, fontSize: '1.02rem', position: 'relative', lineHeight: 1.65 }}>
-            {walletsTracked}+ wallets tracked live. Telegram alert fires the moment a cluster forms.
+            {walletsTracked} wallets tracked live. Telegram alert fires the moment a cluster forms.
             One payment, lifetime access.
           </p>
           <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap', position: 'relative' }}>
@@ -396,7 +397,7 @@ export default function Landing() {
             </button>
           </div>
           <div style={{ marginTop: 20, fontSize: '0.78rem', color: 'var(--text-3)' }}>
-            🛡️ 7-day money-back · Instant access · {walletsTracked}+ wallets · {totalTrades.toLocaleString()} trades analyzed
+            🛡️ 7-day money-back · Instant access · {walletsTracked} wallets · {typeof totalTrades === 'number' ? totalTrades.toLocaleString() : totalTrades} trades analyzed
           </div>
         </div>
       </section>

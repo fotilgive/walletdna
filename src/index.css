@@ -93,11 +93,11 @@ input, textarea, select { font-family: var(--font); }
   overflow: hidden;
 }
 .main-content {
-  flex: 1;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   margin-left: var(--sidebar-w);
+  width: calc(100% - var(--sidebar-w));
 }
 .page-content {
   flex: 1;
@@ -907,7 +907,7 @@ input, textarea, select { font-family: var(--font); }
 @media (max-width: 768px) {
   /* layout */
   .sidebar { display: none; }
-  .main-content { margin-left: 0; }
+  .main-content { margin-left: 0; width: 100%; }
   .page-content { padding: 14px 14px 80px; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .token-grid { grid-template-columns: 1fr; }
