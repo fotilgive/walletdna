@@ -134,30 +134,6 @@ export default function Register() {
             Join WalletDNA
           </h2>
 
-          {/* Google */}
-          {GOOGLE_CLIENT_ID ? (
-            <div style={{ marginBottom: 20 }}>
-              <div
-                id="google-btn-reg"
-                style={{
-                  display: 'flex', justifyContent: 'center',
-                  opacity: googleLoading ? 0.6 : 1,
-                  transition: 'opacity 0.2s', minHeight: 44,
-                }}
-              />
-            </div>
-          ) : (
-            <button style={googleBtnStyle} onClick={() => toast('Google signup coming soon')}>
-              <GoogleIcon /> Sign up with Google
-            </button>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }}>
-            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
-            <span style={{ color: '#475569', fontSize: '0.75rem', fontWeight: 600 }}>OR</span>
-            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
-          </div>
-
           <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div>
               <label style={labelStyle}>Email</label>

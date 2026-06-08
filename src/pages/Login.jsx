@@ -157,42 +157,6 @@ export default function Login() {
             Sign in to your account
           </h2>
 
-          {/* Google button */}
-          {GOOGLE_CLIENT_ID ? (
-            <div style={{ marginBottom: 20 }}>
-              <div
-                id="google-btn"
-                style={{
-                  display: 'flex', justifyContent: 'center',
-                  opacity: googleLoading ? 0.6 : 1,
-                  transition: 'opacity 0.2s',
-                  minHeight: 44,
-                }}
-              />
-              {!GOOGLE_CLIENT_ID && (
-                <button style={googleBtnStyle} disabled>
-                  <GoogleIcon /> Continue with Google
-                </button>
-              )}
-            </div>
-          ) : (
-            <button
-              onClick={() => toast('Google login not configured yet')}
-              style={googleBtnStyle}
-            >
-              <GoogleIcon /> Continue with Google
-            </button>
-          )}
-
-          {/* Divider */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0',
-          }}>
-            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
-            <span style={{ color: '#475569', fontSize: '0.75rem', fontWeight: 600 }}>OR</span>
-            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
-          </div>
-
           {/* Email form */}
           <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div>
