@@ -36,9 +36,11 @@ export default function AccountMenu() {
           <span style={avatarStyle(premium)}>{initial}</span>
         )}
         {premium && <span style={proPill}>PRO</span>}
-        <span style={{ fontSize: '0.78rem', color: 'var(--text-2)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {display}
-        </span>
+        {user.name && (
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-2)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {user.name}
+          </span>
+        )}
         <span style={{ fontSize: 9, color: 'var(--text-3)' }}>▼</span>
       </button>
 
@@ -46,7 +48,6 @@ export default function AccountMenu() {
         <div style={dropdownStyle}>
           <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
             <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-1)' }}>{display}</div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-3)', marginTop: 2 }}>{user.email}</div>
             <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
               {premium ? (
                 <span style={badgePremium}>✓ Premium</span>
