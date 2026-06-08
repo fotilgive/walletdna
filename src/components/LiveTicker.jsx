@@ -132,7 +132,7 @@ export default function LiveTicker() {
                 </span>
                 <span style={{ color: 'var(--text-2)' }}>{it.symbol}</span>
                 <span style={{ color: 'var(--text-3)', fontSize: '0.66rem' }}>
-                  by {it.label} · α{it.alpha}
+                  by {it.label}{it.alpha != null ? ` · α${it.alpha}` : ''}
                 </span>
                 <span style={{ color: 'var(--text-3)', fontSize: '0.66rem', fontFamily: 'var(--mono)' }}>
                   {fmtMins(it.minsAgo)} ago

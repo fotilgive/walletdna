@@ -38,6 +38,24 @@ export function verifyToken(token) {
   }
 }
 
+export function optionalAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const session = getSessionByToken(authHeader.substring(7));
+    if (session) {
+      req.user = {
+        id: session.user_id,
+        email: session.email,
+        isAdmin: session.is_admin === 1,
+        isPremium: session.is_premium === 1,
+        gumroadLicense: session.gumroad_license,
+        onboardingCompleted: session.onboarding_completed === 1,
+      };
+    }
+  }
+  next();
+}
+
 export function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {

@@ -21,7 +21,7 @@ import {
   activateLicense,
 } from './database.js';
 import { syncWallet, recalculateMetrics, assessWalletTradeSignals, deriveDnaScores } from './indexer.js';
-import { setupAuthRoutes, requireAuth, requirePremium, requireAdmin } from './auth.js';
+import { setupAuthRoutes, requireAuth, requirePremium, requireAdmin, optionalAuth } from './auth.js';
 import { sendWelcomeEmail } from './mailer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -960,55 +960,76 @@ app.get('/api/recent-wins', requireAuth, requirePremium, (req, res) => {
 // ──────────────────────────────────────────────
 // LIVE TICKER — real trades from tracked wallets
 // Public: 5 most recent real trades (teaser)
-// Premium: full ticker with all details
+// Ticker — 3-tier strategy:
+//   Public  : all tracked wallets, usd>=100, no alpha exposed  → fresh, looks alive
+//   Premium : HIGH/MEDIUM quality, alpha>=10                   → signal value
+//   Elite   : alpha>=30 reserved for Clusters / Alpha Feed
 // ──────────────────────────────────────────────
 
-app.get('/api/ticker', (req, res) => {
+app.get('/api/ticker', optionalAuth, (req, res) => {
   try {
+    const isPremium = req.user?.isPremium === true;
+
+    if (isPremium) {
+      // Premium tier: HIGH/MEDIUM wallets, alpha >= 10
+      const rows = db.prepare(`
+        SELECT t.address, t.type, t.token_address, t.token_symbol, t.usd_value, t.timestamp,
+               w.label, m.alpha_score
+        FROM wallet_trades t
+        JOIN tracked_wallets w ON w.address = t.address
+        JOIN wallet_metrics m  ON m.address = t.address
+        WHERE m.data_quality IN ('HIGH','MEDIUM')
+          AND m.alpha_score >= 10
+          AND t.usd_value >= 100
+        ORDER BY t.timestamp DESC
+        LIMIT 50
+      `).all();
+
+      const ticker = rows.map(r => ({
+        label:        r.label || `${r.address.slice(0,6)}…${r.address.slice(-4)}`,
+        address:      r.address,
+        type:         r.type,
+        symbol:       r.token_symbol,
+        tokenAddress: r.token_address,
+        usd:          Math.round(r.usd_value),
+        alpha:        r.alpha_score,  // exposed for premium
+        minsAgo:      Math.max(1, Math.round((Date.now() - r.timestamp) / 60000)),
+      }));
+
+      return res.json({ success: true, ticker, preview: false });
+    }
+
+    // Public tier: all tracked wallets, no alpha score exposed
     const rows = db.prepare(`
       SELECT t.address, t.type, t.token_address, t.token_symbol, t.usd_value, t.timestamp,
-             w.label, m.alpha_score
+             w.label
       FROM wallet_trades t
       JOIN tracked_wallets w ON w.address = t.address
-      JOIN wallet_metrics m  ON m.address = t.address
-      WHERE m.data_quality IN ('HIGH','MEDIUM')
-        AND m.alpha_score >= 30
-        AND t.usd_value >= 100
+      WHERE t.usd_value >= 100
       ORDER BY t.timestamp DESC
-      LIMIT 50
+      LIMIT 30
     `).all();
-    
-    const realTrades = rows.map(r => ({
-      label: r.label || `${r.address.slice(0,6)}…${r.address.slice(-4)}`,
-      address: r.address,
-      type: r.type,
-      symbol: r.token_symbol,
+
+    // Show 5 public items as teaser; signal there are more
+    const allPublic = rows.map(r => ({
+      label:        r.label || `${r.address.slice(0,6)}…${r.address.slice(-4)}`,
+      address:      r.address,
+      type:         r.type,
+      symbol:       r.token_symbol,
       tokenAddress: r.token_address,
-      usd: Math.round(r.usd_value),
-      alpha: r.alpha_score,
-      minsAgo: Math.max(1, Math.round((Date.now() - r.timestamp) / 60000)),
+      usd:          Math.round(r.usd_value),
+      alpha:        null,  // not exposed publicly
+      minsAgo:      Math.max(1, Math.round((Date.now() - r.timestamp) / 60000)),
     }));
-    
-    // Check if user is authenticated & premium
-    const isPremium = req.user?.isPremium === true;
-    
-    // Public: show 5 most recent (teaser to encourage signup)
-    // Premium: show all 50
-    const limit = isPremium ? 50 : 5;
-    const ticker = realTrades.slice(0, limit);
-    
+
     res.json({
       success: true,
-      ticker,
-      total: realTrades.length,
-      preview: !isPremium && realTrades.length > 5,
+      ticker:  allPublic.slice(0, 5),
+      total:   allPublic.length,
+      preview: allPublic.length > 5,
     });
   } catch (e) {
-    res.json({
-      success: true,
-      ticker: [],
-      preview: false,
-    });
+    res.json({ success: true, ticker: [], preview: false });
   }
 });
 
